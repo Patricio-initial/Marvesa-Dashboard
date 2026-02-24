@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tank Storage Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js"></script>
+  <style>
+    /* ─── Design tokens ─────────────────────────────────────── */
+    :root {
+      --bg:        #f0f2f5;
+      --surface:   #ffffff;
+      --border:    #e2e8f0;
+      --primary:   #1e3a5f;
+      --primary-light: #2a4f82;
+      --text:      #1a202c;
+      --muted:     #64748b;
+      --green:     #16a34a;
+      --green-bg:  #f0fdf4;
+      --yellow:    #b45309;
+      --yellow-bg: #fffbeb;
+      --red:       #dc2626;
+      --red-bg:    #fef2f2;
+      --radius:    10px;
+      --shadow:    0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05);
+    }
+
+    /* ─── Reset ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh; }
+    code { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.875em;
+           background: #f1f5f9; padding: 0.1em 0.35em; border-radius: 4px; }
+
+    /* ─── Header ─────────────────────────────────────────────── */
+    .header {
+      background: var(--primary);
+      color: white;
+      padding: 0.875rem 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
+    .header-left { display: flex; align-items: center; gap: 0.75rem; }
+    .header-icon { font-size: 1.5rem; }
+    .header-title { font-size: 1.125rem; font-weight: 700; letter-spacing: -.01em; }
+    .header-right { display: flex; align-items: center; gap: 1rem; font-size: 0.8125rem; opacity: .85; }
+    .header-meta { display: flex; flex-direction: column; align-items: flex-end; gap: .1rem; }
+    #last-updated { font-size: .75rem; opacity: .8; }
+    #next-refresh  { font-size: .75rem; opacity: .7; }
+    .refresh-btn {
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+      color: white; padding: .375rem .875rem; border-radius: 6px; cursor: pointer;
+      font-size: .8125rem; transition: background .15s;
+    }
+    .refresh-btn:hover { background: rgba(255,255,255,.25); }
+    .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ─── Layout ─────────────────────────────────────────────── */
+    .main { padding: 1.5rem 2rem; max-width: 1500px; margin: 0 auto; }
+
+    /* ─── Summary cards ──────────────────────────────────────── */
+    .summary-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 1rem; margin-bottom: 1.5rem;
+    }
+    .summary-card {
+      background: var(--surface); border-radius: var(--radius);
+      padding: 1.125rem 1.5rem; box-shadow: var(--shadow);
+      display: flex; flex-direction: column; gap: .25rem;
+      border-left: 4px solid var(--border);
+    }
+    .summary-card .label {
+      font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    }
+    .summary-card .value { font-size: 2rem; font-weight: 800; line-height: 1; color: var(--text); }
+    .summary-card.s-critical { border-left-color: var(--red); }
+    .summary-card.s-critical .value { color: var(--red); }
+    .summary-card.s-warning  { border-left-color: var(--yellow); }
+    .summary-card.s-warning  .value { color: var(--yellow); }
+    .summary-card.s-normal   { border-left-color: var(--green); }
+    .summary-card.s-normal   .value { color: var(--green); }
+
+    /* ─── Toolbar (tabs + search) ────────────────────────────── */
+    .toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap;
+    }
+    .tabs { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .tab {
+      padding: .4375rem 1rem; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--surface);
+      cursor: pointer; font-size: .875rem; color: var(--muted);
+      transition: all .15s;
+    }
+    .tab:hover  { border-color: var(--primary-light); color: var(--primary); }
+    .tab.active { background: var(--primary); border-color: var(--primary); color: white; font-weight: 600; }
+
+    .search-wrap { position: relative; }
+    .search-wrap svg { position: absolute; left: .625rem; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+    #search-input {
+      padding: .4375rem .75rem .4375rem 2rem; border-radius: 6px;
+      border: 1px solid var(--border); font-size: .875rem; width: 220px;
+      background: var(--surface); color: var(--text);
+    }
+    #search-input:focus { outline: none; border-color: var(--primary-light); box-shadow: 0 0 0 3px rgba(42,79,130,.15); }
+
+    /* ─── Sort controls ──────────────────────────────────────── */
+    .sort-row {
+      display: flex; align-items: center; gap: .5rem;
+      margin-bottom: 1rem; font-size: .8125rem; color: var(--muted);
+    }
+    .sort-btn {
+      padding: .25rem .625rem; border-radius: 5px; border: 1px solid var(--border);
+      background: var(--surface); cursor: pointer; font-size: .8125rem; color: var(--muted);
+      transition: all .15s;
+    }
+    .sort-btn:hover  { border-color: var(--primary-light); color: var(--primary); }
+    .sort-btn.active { background: var(--primary); border-color: var(--primary); color: white; }
+
+    /* ─── Tank grid ───────────────────────────────────────────── */
+    .tank-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+      gap: .75rem;
+    }
+
+    /* ─── Tank card ───────────────────────────────────────────── */
+    .tank-card {
+      background: var(--surface); border-radius: var(--radius);
+      padding: .75rem .875rem .7rem;
+      box-shadow: var(--shadow); border-top: 3px solid var(--green);
+      position: relative; transition: transform .15s, box-shadow .15s;
+    }
+    .tank-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.1); }
+    .tank-card.warning { border-top-color: var(--yellow); background: var(--yellow-bg); }
+    .tank-card.critical { border-top-color: var(--red); background: var(--red-bg); }
+
+    .tank-name { font-weight: 700; font-size: .875rem; margin-bottom: .2rem; color: var(--text); }
+    .product-badge {
+      display: inline-block; padding: .1rem .45rem; border-radius: 999px;
+      background: #e8edf5; color: var(--primary); font-size: .7rem; font-weight: 600;
+      margin-bottom: .6rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tank-card.warning  .product-badge { background: #fde68a; color: #78350f; }
+    .tank-card.critical .product-badge { background: #fecaca; color: #7f1d1d; }
+
+    .fill-bar-bg {
+      background: #e2e8f0; border-radius: 999px; height: 6px; margin-bottom: .375rem; overflow: hidden;
+    }
+    .fill-bar {
+      height: 100%; border-radius: 999px; background: var(--green); transition: width .4s ease;
+    }
+    .tank-card.warning  .fill-bar { background: #d97706; }
+    .tank-card.critical .fill-bar { background: var(--red); }
+
+    .fill-pct  { font-weight: 800; font-size: 1rem; }
+    .fill-vols { font-size: .7rem; color: var(--muted); margin-top: .1rem; opacity: .8; }
+
+    .status-chip {
+      position: absolute; top: .75rem; right: .75rem;
+      font-size: .65rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .07em; padding: .1rem .4rem; border-radius: 4px;
+    }
+    .tank-card.warning  .status-chip { background: #fde68a; color: #78350f; }
+    .tank-card.critical .status-chip { background: #fecaca; color: #7f1d1d; }
+
+    /* ─── Setup / Error / Loading ────────────────────────────── */
+    .setup-panel {
+      background: var(--surface); border-radius: var(--radius); padding: 2.5rem 2rem;
+      text-align: center; max-width: 620px; margin: 2rem auto; box-shadow: var(--shadow);
+    }
+    .setup-panel h2 { font-size: 1.125rem; margin-bottom: .625rem; color: var(--primary); }
+    .setup-panel p  { color: var(--muted); font-size: .9rem; line-height: 1.65; margin-bottom: 1.125rem; }
+    .setup-panel ol { text-align: left; font-size: .875rem; line-height: 2.1; color: var(--muted); padding-left: 1.25rem; }
+    .setup-panel ol li strong { color: var(--text); }
+
+    .error-msg {
+      background: var(--red-bg); border: 1px solid #fca5a5; border-radius: var(--radius);
+      padding: 1rem 1.5rem; color: var(--red); margin-bottom: 1rem; font-size: .875rem;
+    }
+    .loading-msg { text-align: center; padding: 3rem; color: var(--muted); font-size: .9rem; }
+
+    .no-results {
+      grid-column: 1/-1; text-align: center; padding: 2.5rem; color: var(--muted); font-size: .9rem;
+    }
+
+    /* ─── Shared tank card ────────────────────────────────────── */
+    .shared-card { grid-column: span 2; }
+    @media (max-width: 500px) { .shared-card { grid-column: span 1; } }
+
+    .shared-header {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      margin-bottom: .5rem;
+    }
+    .vessel-badge {
+      font-size: .75rem; color: var(--muted); background: #f1f5f9;
+      padding: .2rem .6rem; border-radius: 5px; font-weight: 500; white-space: nowrap;
+    }
+    .shared-fill-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-top: .2rem; margin-bottom: .875rem;
+    }
+    .shipper-table {
+      width: 100%; border-collapse: collapse; font-size: .8125rem; margin-top: .25rem;
+    }
+    .shipper-table th {
+      text-align: left; padding: .3rem .5rem;
+      font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--muted); border-bottom: 1px solid var(--border);
+    }
+    .shipper-table td {
+      padding: .4rem .5rem; border-bottom: 1px solid rgba(0,0,0,.05); color: var(--text);
+    }
+    .shipper-table tr:last-child td { border-bottom: none; }
+    .shipper-table td:nth-child(2),
+    .shipper-table td:nth-child(3) { text-align: right; font-variant-numeric: tabular-nums; }
+    .tank-card.warning  .shipper-table th { border-bottom-color: #fde68a; }
+    .tank-card.critical .shipper-table th { border-bottom-color: #fecaca; }
+    .ship-row-under td { background: #fef9c3; }   /* yellow – under by >100k */
+    .ship-row-ok    td { background: #d1fae5; }   /* green  – within 5k     */
+    .ship-row-over  td { background: #fee2e2; }   /* red    – over by >10k  */
+
+    /* ─── Dark mode ──────────────────────────────────────────── */
+    html.dark {
+      --bg:        #0d1117;
+      --surface:   #161b24;
+      --border:    #252d3d;
+      --text:      #e2e8f0;
+      --muted:     #8892a4;
+      --green-bg:  #052e16;
+      --yellow-bg: #1c1200;
+      --red-bg:    #1c0505;
+      --shadow:    0 1px 4px rgba(0,0,0,.5);
+    }
+    html.dark .product-badge    { background: #1e2d45; color: #7eb8f7; }
+    html.dark .vessel-badge     { background: #1e2535; }
+    html.dark #search-input     { background: var(--surface); color: var(--text); border-color: var(--border); }
+    html.dark .row-status-chip.warning  { background: #78350f; color: #fde68a; }
+    html.dark .row-status-chip.critical { background: #7f1d1d; color: #fecaca; }
+    html.dark .shipper-table td { border-bottom-color: rgba(255,255,255,.05); }
+    html.dark .ship-row-under td { background: rgba(251,191,36,.12); }
+    html.dark .ship-row-ok    td { background: rgba(34,197,94,.10); }
+    html.dark .ship-row-over  td { background: rgba(239,68,68,.12); }
+
+    .dark-toggle {
+      background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+      color: white; padding: .3rem .55rem; border-radius: 6px;
+      cursor: pointer; font-size: 1rem; line-height: 1; transition: background .15s;
+    }
+    .dark-toggle:hover { background: rgba(255,255,255,.22); }
+
+    /* ─── Table / list view ──────────────────────────────────── */
+    .table-wrap {
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); overflow: hidden;
+    }
+    .tank-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+    .tank-table th {
+      text-align: left; padding: .625rem 1rem;
+      font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
+      color: var(--muted); border-bottom: 2px solid var(--border); font-weight: 600;
+    }
+    .tank-table td {
+      padding: .7rem 1rem; border-bottom: 1px solid var(--border);
+      color: var(--text); vertical-align: middle;
+    }
+    .tank-table tbody tr:last-child td { border-bottom: none; }
+    .tank-table tbody tr:hover { background: rgba(128,128,128,.06); }
+
+    .col-tank    { font-weight: 700; white-space: nowrap; }
+    .col-product { color: var(--muted); font-size: .825rem; }
+    .col-num     { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .col-pct     { width: 38%; min-width: 180px; }
+
+    .row-status-chip {
+      display: inline-block; font-size: .6rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .06em;
+      padding: .1rem .35rem; border-radius: 4px; margin-left: .4rem; vertical-align: middle;
+    }
+    .row-status-chip.warning  { background: #fde68a; color: #78350f; }
+    .row-status-chip.critical { background: #fecaca; color: #7f1d1d; }
+
+    .pct-cell  { display: flex; align-items: center; gap: .625rem; }
+    .pct-track { flex: 1; height: 7px; background: var(--border); border-radius: 999px; overflow: hidden; }
+    .pct-fill  { height: 100%; border-radius: 999px; transition: width .4s ease; }
+    .pct-fill.normal   { background: var(--green); }
+    .pct-fill.warning  { background: #d97706; }
+    .pct-fill.critical { background: var(--red); }
+    .pct-fill.unknown  { background: var(--muted); }
+    .pct-label { min-width: 3.75rem; text-align: right; font-weight: 700; font-size: .875rem; }
+    .pct-label.normal   { color: var(--green); }
+    .pct-label.warning  { color: #d97706; }
+    .pct-label.critical { color: var(--red); }
+    .pct-label.unknown  { color: var(--muted); }
+
+    /* ─── Responsive ─────────────────────────────────────────── */
+    @media (max-width: 900px)  { .main { padding: 1rem; } .summary-grid { grid-template-columns: repeat(2,1fr); } }
+    @media (max-width: 700px)  {
+      .tank-table .col-num { display: none; }
+      .col-pct { min-width: 120px; }
+    }
+    @media (max-width: 600px)  {
+      .header { padding: .875rem 1rem; }
+      .summary-grid { grid-template-columns: repeat(2,1fr); gap: .625rem; }
+      .toolbar { flex-direction: column; align-items: stretch; }
+      #search-input { width: 100%; }
+      .tank-grid { grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: .75rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     ▶  CONFIGURATION  — edit this section, then save.
+     ════════════════════════════════════════════════════════════
+
+  HOW TO GET YOUR GOOGLE SHEET CSV URL:
+  1. Open your Google Sheet.
+  2. File → Share → Publish to web.
+  3. Under "Link", select the specific sheet tab.
+  4. Change the format dropdown to "Comma-separated values (.csv)".
+  5. Click Publish → OK.
+  6. Copy the URL that appears and paste it below.
+
+  Repeat for each facility sheet.
+  ═══════════════════════════════════════════════════════════ -->
+<script>
+const CONFIG = {
+
+  /* ── Dashboard title ─────────────────────────────────────── */
+  title: "Marvesa Tank Storage Dashboard",
+
+  /* ── One entry per facility / Google Sheet ───────────────── */
+  facilities: [
+    {
+      name: "Facility 1",
+      csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=1509369466&single=true&output=csv"
+      // uses global CONFIG.columns and CONFIG.defaultUnit below
+    },
+    {
+      name: "TPR",
+      csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=1557124348&single=true&output=csv",
+
+      // "shared" = multiple rows per tank (one per shipper), grouped into one card
+      type: "shared",
+
+      // Total physical capacity of Tank 32 in kg  (1,380 MT = 1,380,000 kg)
+      capacity: 1380000,
+
+      // Column headers specific to this sheet
+      columns: {
+        name:      "Tank",
+        product:   "Product",
+        volume:    "Stock",           // current stock per shipper
+        shipper:   "Shipper",
+        vessel:    "Vessel",
+        nominated: "Nominated Qtty KG"
+      },
+      defaultUnit: "kg"
+    }
+  ],
+
+  /* ── Column header names in your Google Sheet ────────────── */
+  /* Change these values to match whatever headings you use.    */
+  columns: {
+    name:     "Tank",             // tank name or ID
+    product:  "Product/Supplier", // stored product + supplier
+    capacity: "Capacity_Kg",      // maximum capacity in kg
+    volume:   "Stocl_ Kg",        // current stock in kg
+    unit:     "",                 // no unit column — use defaultUnit below
+    status:   "Status",           // optional manual override column
+    pct:      "% Used"            // pre-calculated fill percentage column
+  },
+
+  /* ── Default unit shown on cards when no unit column exists ─ */
+  defaultUnit: "kg",
+
+  /* ── Alert thresholds (fill %) ───────────────────────────── */
+  /* 0% = free/empty (normal), 100% = full (problem)           */
+  thresholds: {
+    critical: 95,   // above this → red  (essentially full)
+    warning:  85    // above this → yellow (getting close to full)
+  },
+
+  /* ── Auto-refresh interval in minutes ───────────────────── */
+  refreshMinutes: 5
+
+};
+</script>
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+
+<!-- ─── HTML structure ─────────────────────────────────────── -->
+<header class="header">
+  <div class="header-left">
+    <span class="header-icon">🏭</span>
+    <span class="header-title" id="header-title">Tank Storage Dashboard</span>
+  </div>
+  <div class="header-right">
+    <div class="header-meta">
+      <span id="last-updated">Not yet loaded</span>
+      <span id="next-refresh"></span>
+    </div>
+    <button class="dark-toggle" id="dark-toggle" onclick="toggleDark()" title="Toggle dark mode">🌙</button>
+    <button class="refresh-btn" id="refresh-btn" onclick="manualRefresh()">⟳ Refresh</button>
+  </div>
+</header>
+
+<main class="main">
+  <!-- Summary cards -->
+  <div class="summary-grid">
+    <div class="summary-card">
+      <span class="label">Total Tanks</span>
+      <span class="value" id="summary-total">—</span>
+    </div>
+    <div class="summary-card s-critical">
+      <span class="label">⛔ Critical</span>
+      <span class="value" id="summary-critical">0</span>
+    </div>
+    <div class="summary-card s-warning">
+      <span class="label">⚠ Warning</span>
+      <span class="value" id="summary-warning">0</span>
+    </div>
+    <div class="summary-card s-normal">
+      <span class="label">✓ Normal</span>
+      <span class="value" id="summary-normal">0</span>
+    </div>
+  </div>
+
+  <!-- Toolbar: facility tabs + search -->
+  <div class="toolbar">
+    <div id="tabs" class="tabs"></div>
+    <div class="search-wrap">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      </svg>
+      <input id="search-input" type="search" placeholder="Search tank or product…" oninput="renderTankGrid()">
+    </div>
+  </div>
+
+  <!-- Sort row -->
+  <div class="sort-row">
+    Sort by:
+    <button class="sort-btn active" id="sort-status"  onclick="setSort('status')">Status</button>
+    <button class="sort-btn"        id="sort-fill-asc" onclick="setSort('fill-asc')">Fill % ↑</button>
+    <button class="sort-btn"        id="sort-fill-desc"onclick="setSort('fill-desc')">Fill % ↓</button>
+    <button class="sort-btn"        id="sort-name"     onclick="setSort('name')">Name</button>
+    <span style="margin-left:auto;display:flex;gap:.4rem;">
+      <button class="sort-btn active" id="view-list"  onclick="setView('list')">☰ List</button>
+      <button class="sort-btn"        id="view-cards" onclick="setView('cards')">⊞ Cards</button>
+    </span>
+  </div>
+
+  <!-- Tank grid (or setup/error panel) -->
+  <div id="tanks-container"></div>
+</main>
+
+
+<!-- ─── Application logic ────────────────────────────────── -->
+<script>
+/* ── State ─────────────────────────────────────────────────── */
+let allFacilityData = [];
+let activeFacility  = 0;
+let currentSort     = 'status';
+let currentView     = 'list';
+let refreshTimer    = null;
+let nextRefreshAt   = null;
+
+function toggleDark() {
+  const on = document.documentElement.classList.toggle('dark');
+  document.getElementById('dark-toggle').textContent = on ? '☀️' : '🌙';
+  localStorage.setItem('darkMode', on ? '1' : '0');
+}
+
+function setView(v) {
+  currentView = v;
+  document.getElementById('view-list') ?.classList.toggle('active', v === 'list');
+  document.getElementById('view-cards')?.classList.toggle('active', v === 'cards');
+  renderTankGrid();
+}
+
+/* ── Helpers ───────────────────────────────────────────────── */
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function colVal(row, key, cols) {
+  const colMap = cols || CONFIG.columns;
+  const header = colMap[key] || key;
+  const k = Object.keys(row).find(k => k.trim().toLowerCase() === header.toLowerCase());
+  return k ? (row[k] ?? '').toString().trim() : '';
+}
+
+/* ── Shared-facility helpers ───────────────────────────────── */
+function groupByTank(rows, facCols) {
+  const groups = {};
+  rows.forEach(row => {
+    const id = colVal(row, 'name', facCols);
+    if (!groups[id]) groups[id] = [];
+    groups[id].push(row);
+  });
+  return groups;
+}
+
+function sharedTankStatus(rows, fac) {
+  const facCols = fac.columns || CONFIG.columns;
+  const capacity = fac.capacity || 0;
+  const totalStock = rows.reduce((sum, row) => {
+    const v = parseFloat(colVal(row, 'volume', facCols).replace(/,/g,''));
+    return sum + (isNaN(v) ? 0 : v);
+  }, 0);
+  const pct = capacity > 0 ? Math.min(100, totalStock / capacity * 100) : null;
+  if (pct === null)                          return 'unknown';
+  if (pct >= CONFIG.thresholds.critical)     return 'critical';
+  if (pct >= CONFIG.thresholds.warning)      return 'warning';
+  return 'normal';
+}
+
+function getFacilityTankStatuses(fac) {
+  if (fac.error || fac.demo || !fac.tanks.length) return [];
+  if (fac.type === 'shared') {
+    const facCols = fac.columns || CONFIG.columns;
+    return Object.values(groupByTank(fac.tanks, facCols))
+                 .map(rows => sharedTankStatus(rows, fac));
+  }
+  return fac.tanks.map(row => statusOf(row));
+}
+
+function fillPct(row) {
+  // Use pre-calculated percentage column if available
+  const direct = colVal(row,'pct').replace(/%/g,'').replace(/,/g,'').trim();
+  if (direct !== '') {
+    const n = parseFloat(direct);
+    if (!isNaN(n)) return Math.min(100, Math.max(0, n));
+  }
+  // Fall back to computing from volume / capacity
+  const vol = parseFloat(colVal(row,'volume').replace(/,/g,''));
+  const cap = parseFloat(colVal(row,'capacity').replace(/,/g,''));
+  if (isNaN(vol) || isNaN(cap) || cap === 0) return null;
+  return Math.min(100, Math.max(0, vol / cap * 100));
+}
+
+function statusOf(row) {
+  const manual = colVal(row,'status').toLowerCase();
+  if (['critical','alert','error','alarm'].includes(manual)) return 'critical';
+  if (['warning','warn','low'].includes(manual))             return 'warning';
+  const pct = fillPct(row);
+  if (pct === null)                               return 'unknown';
+  if (pct >= CONFIG.thresholds.critical)          return 'critical';
+  if (pct >= CONFIG.thresholds.warning)           return 'warning';
+  return 'normal';
+}
+
+function statusWeight(s) { return {critical:0, warning:1, unknown:2, normal:3}[s] ?? 3; }
+
+function fmtNum(raw) {
+  const n = parseFloat((raw||'').replace(/,/g,''));
+  return isNaN(n) ? raw : n.toLocaleString();
+}
+
+function isPlaceholder(url) {
+  return !url || url.includes('PASTE_YOUR');
+}
+
+/* ── Data loading ──────────────────────────────────────────── */
+async function fetchCSV(url) {
+  const resp = await fetch(url, { cache: 'no-cache' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} — ${resp.statusText}`);
+  const text = await resp.text();
+  const { data } = Papa.parse(text, { header: true, skipEmptyLines: true });
+  return data;
+}
+
+async function loadAll() {
+  allFacilityData = [];
+  for (const fac of CONFIG.facilities) {
+    if (isPlaceholder(fac.csvUrl)) {
+      allFacilityData.push({ ...fac, tanks: [], error: null, demo: true });
+    } else {
+      try {
+        const tanks = await fetchCSV(fac.csvUrl);
+        allFacilityData.push({ ...fac, tanks, error: null });
+      } catch(e) {
+        allFacilityData.push({ ...fac, tanks: [], error: e.message });
+      }
+    }
+  }
+}
+
+/* ── Rendering ─────────────────────────────────────────────── */
+function renderHeader() {
+  document.getElementById('header-title').textContent = CONFIG.title;
+  document.title = CONFIG.title;
+}
+
+function renderSummary() {
+  const statuses = allFacilityData.flatMap(f => getFacilityTankStatuses(f));
+  document.getElementById('summary-total').textContent    = statuses.length || '—';
+  document.getElementById('summary-critical').textContent = statuses.filter(s => s==='critical').length;
+  document.getElementById('summary-warning').textContent  = statuses.filter(s => s==='warning').length;
+  document.getElementById('summary-normal').textContent   = statuses.filter(s => s==='normal').length;
+}
+
+function renderTabs() {
+  const wrap = document.getElementById('tabs');
+  wrap.innerHTML = '';
+  allFacilityData.forEach((f, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'tab' + (i === activeFacility ? ' active' : '');
+    const critCount = getFacilityTankStatuses(f).filter(s => s==='critical').length;
+    btn.textContent  = f.name + (critCount ? ` (${critCount} ⛔)` : '');
+    btn.onclick = () => { activeFacility = i; renderTabs(); renderTankGrid(); };
+    wrap.appendChild(btn);
+  });
+}
+
+function renderTankGrid() {
+  const wrap   = document.getElementById('tanks-container');
+  const query  = (document.getElementById('search-input').value || '').toLowerCase();
+  const fac    = allFacilityData[activeFacility];
+  wrap.innerHTML = '';
+
+  if (!fac) return;
+
+  if (fac.demo) {
+    wrap.innerHTML = `
+      <div class="setup-panel">
+        <h2>Setup Required</h2>
+        <p>Edit the <code>CONFIG</code> section at the top of this file to connect your Google Sheets data.</p>
+        <ol>
+          <li>Open your Google Sheet.</li>
+          <li>Go to <strong>File → Share → Publish to web</strong>.</li>
+          <li>Pick the correct sheet tab and select <strong>CSV</strong> as the format.</li>
+          <li>Click <strong>Publish</strong>, then copy the URL.</li>
+          <li>Paste it into <code>CONFIG.facilities[].csvUrl</code> and save this file.</li>
+          <li>Update <code>CONFIG.columns</code> so the names match your sheet's column headers.</li>
+        </ol>
+      </div>`;
+    return;
+  }
+
+  if (fac.error) {
+    wrap.innerHTML = `<div class="error-msg">
+      <strong>Could not load data for "${esc(fac.name)}".</strong><br>
+      ${esc(fac.error)}<br><br>
+      Make sure the Google Sheet is published to web as CSV
+      (<em>File → Share → Publish to web</em>).
+    </div>`;
+    return;
+  }
+
+  if (fac.tanks.length === 0) {
+    wrap.innerHTML = `<div class="loading-msg">No rows found. Check the CSV URL and column headers in CONFIG.</div>`;
+    return;
+  }
+
+  // ── Shared facility: group rows by tank, render one card per tank ──
+  if (fac.type === 'shared') {
+    const facCols = fac.columns || CONFIG.columns;
+    const groups  = groupByTank(fac.tanks, facCols);
+    const grid    = document.createElement('div');
+    grid.className = 'tank-grid';
+    let shown = 0;
+    Object.entries(groups).forEach(([tankId, rows]) => {
+      if (query) {
+        const product  = colVal(rows[0], 'product', facCols).toLowerCase();
+        const shippers = rows.map(r => colVal(r, 'shipper', facCols).toLowerCase()).join(' ');
+        if (!tankId.toLowerCase().includes(query) && !product.includes(query) && !shippers.includes(query)) return;
+      }
+      grid.appendChild(buildSharedCard(tankId, rows, fac));
+      shown++;
+    });
+    if (!shown) grid.innerHTML = `<div class="no-results">No tanks match your search.</div>`;
+    wrap.appendChild(grid);
+    return;
+  }
+
+  // Filter
+  let tanks = fac.tanks.filter(row => {
+    if (!query) return true;
+    const name    = colVal(row,'name').toLowerCase();
+    const product = colVal(row,'product').toLowerCase();
+    return name.includes(query) || product.includes(query);
+  });
+
+  // Sort
+  tanks = [...tanks].sort((a,b) => {
+    if (currentSort === 'status')     return statusWeight(statusOf(a)) - statusWeight(statusOf(b));
+    if (currentSort === 'fill-asc')   return (fillPct(a)??999) - (fillPct(b)??999);
+    if (currentSort === 'fill-desc')  return (fillPct(b)??-1)  - (fillPct(a)??-1);
+    if (currentSort === 'name')       return colVal(a,'name').localeCompare(colVal(b,'name'));
+    return 0;
+  });
+
+  if (tanks.length === 0) {
+    wrap.innerHTML = `<div class="no-results">No tanks match your search.</div>`;
+    return;
+  }
+
+  if (currentView === 'list') {
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'table-wrap';
+    tableWrap.appendChild(buildList(tanks));
+    wrap.appendChild(tableWrap);
+  } else {
+    const grid = document.createElement('div');
+    grid.className = 'tank-grid';
+    tanks.forEach(row => grid.appendChild(buildCard(row)));
+    wrap.appendChild(grid);
+  }
+}
+
+function buildCard(row) {
+  const status  = statusOf(row);
+  const pct     = fillPct(row);
+  const name    = colVal(row,'name')    || 'Unnamed Tank';
+  const product = colVal(row,'product') || '';
+  const vol     = fmtNum(colVal(row,'volume'));
+  const cap     = fmtNum(colVal(row,'capacity'));
+  const unit    = colVal(row,'unit') || CONFIG.defaultUnit || '';
+  const unitStr = unit ? ` ${unit}` : '';
+
+  const card = document.createElement('div');
+  card.className = `tank-card${status !== 'normal' && status !== 'unknown' ? ' '+status : ''}`;
+
+  const pctDisp   = pct !== null ? pct.toFixed(1) + '%' : '—';
+  const barWidth  = pct !== null ? pct.toFixed(1) : 0;
+  const chip      = status !== 'normal' && status !== 'unknown'
+                    ? `<span class="status-chip">${status}</span>` : '';
+  const volLine   = (vol && cap)
+                    ? `${vol}${unitStr} / ${cap}${unitStr}`
+                    : vol ? `${vol}${unitStr}` : '';
+
+  card.innerHTML = `
+    ${chip}
+    <div class="tank-name">${esc(name)}</div>
+    ${product ? `<span class="product-badge">${esc(product)}</span>` : ''}
+    <div class="fill-bar-bg">
+      <div class="fill-bar" style="width:${barWidth}%"></div>
+    </div>
+    <div class="fill-pct">${pctDisp}</div>
+    ${volLine ? `<div class="fill-vols">${esc(volLine)}</div>` : ''}
+  `;
+  return card;
+}
+
+function buildList(tanks) {
+  const table = document.createElement('table');
+  table.className = 'tank-table';
+  table.innerHTML = `<thead><tr>
+    <th>Tank</th>
+    <th>Product / Supplier</th>
+    <th class="col-num">Stock (kg)</th>
+    <th class="col-num">Capacity (kg)</th>
+    <th class="col-pct">% Used</th>
+  </tr></thead><tbody></tbody>`;
+  const tbody = table.querySelector('tbody');
+
+  tanks.forEach(row => {
+    const status   = statusOf(row);
+    const pct      = fillPct(row);
+    const name     = colVal(row,'name')    || '—';
+    const product  = colVal(row,'product') || '—';
+    const vol      = fmtNum(colVal(row,'volume'));
+    const cap      = fmtNum(colVal(row,'capacity'));
+    const pctDisp  = pct !== null ? pct.toFixed(2) + '%' : '—';
+    const barWidth = pct !== null ? pct.toFixed(1) : 0;
+    const chip     = (status === 'critical' || status === 'warning')
+                     ? `<span class="row-status-chip ${status}">${status}</span>` : '';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="col-tank">${esc(name)}${chip}</td>
+      <td class="col-product">${esc(product)}</td>
+      <td class="col-num">${esc(vol)}</td>
+      <td class="col-num">${esc(cap)}</td>
+      <td class="col-pct">
+        <div class="pct-cell">
+          <div class="pct-track"><div class="pct-fill ${status}" style="width:${barWidth}%"></div></div>
+          <span class="pct-label ${status}">${pctDisp}</span>
+        </div>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+  return table;
+}
+
+function buildSharedCard(tankId, rows, fac) {
+  const facCols  = fac.columns || CONFIG.columns;
+  const unit     = fac.defaultUnit || CONFIG.defaultUnit || '';
+  const unitStr  = unit ? ` ${unit}` : '';
+  const capacity = fac.capacity || 0;
+
+  // Sum total stock across all shippers
+  const totalStock = rows.reduce((sum, row) => {
+    const v = parseFloat(colVal(row, 'volume', facCols).replace(/,/g,''));
+    return sum + (isNaN(v) ? 0 : v);
+  }, 0);
+
+  const pct      = capacity > 0 ? Math.min(100, totalStock / capacity * 100) : null;
+  const status   = sharedTankStatus(rows, fac);
+  const product  = colVal(rows[0], 'product', facCols);
+  const vessels  = [...new Set(rows.map(r => colVal(r, 'vessel', facCols)).filter(Boolean))].join(', ');
+
+  const pctDisp  = pct !== null ? pct.toFixed(1) + '%' : '—';
+  const barWidth = pct !== null ? pct.toFixed(1) : 0;
+  const chip     = status !== 'normal' && status !== 'unknown'
+                   ? `<span class="status-chip">${status}</span>` : '';
+
+  const shipperRows = rows.map(row => {
+    const shipper      = colVal(row, 'shipper',   facCols);
+    const stock        = fmtNum(colVal(row, 'volume',    facCols));
+    const nominated    = fmtNum(colVal(row, 'nominated', facCols));
+    const stockNum     = parseFloat(colVal(row, 'volume',    facCols).replace(/,/g,'')) || 0;
+    const nominatedNum = parseFloat(colVal(row, 'nominated', facCols).replace(/,/g,'')) || 0;
+    const diff         = stockNum - nominatedNum;
+    let rowClass = '';
+    if      (diff < -100000)          rowClass = 'ship-row-under'; // yellow: under by >100k
+    else if (Math.abs(diff) <= 5000)  rowClass = 'ship-row-ok';   // green:  within ±5k
+    else if (diff > 10000)            rowClass = 'ship-row-over';  // red:    over by >10k
+    // otherwise: default white
+    return `<tr class="${rowClass}">
+      <td>${esc(shipper)}</td>
+      <td>${esc(stock)}${esc(unitStr)}</td>
+      <td>${esc(nominated)}${esc(unitStr)}</td>
+    </tr>`;
+  }).join('');
+
+  const card = document.createElement('div');
+  card.className = `tank-card shared-card${status !== 'normal' && status !== 'unknown' ? ' '+status : ''}`;
+  card.innerHTML = `
+    ${chip}
+    <div class="shared-header">
+      <div>
+        <div class="tank-name">Tank ${esc(tankId)}</div>
+        ${product ? `<span class="product-badge">${esc(product)}</span>` : ''}
+      </div>
+      ${vessels ? `<div class="vessel-badge">⛴ ${esc(vessels)}</div>` : ''}
+    </div>
+    <div class="fill-bar-bg">
+      <div class="fill-bar" style="width:${barWidth}%"></div>
+    </div>
+    <div class="shared-fill-row">
+      <span class="fill-pct">${pctDisp}</span>
+      <span class="fill-vols">${totalStock.toLocaleString()}${esc(unitStr)} / ${capacity.toLocaleString()}${esc(unitStr)}</span>
+    </div>
+    <table class="shipper-table">
+      <thead><tr><th>Shipper</th><th>Stock</th><th>Nominated</th></tr></thead>
+      <tbody>${shipperRows}</tbody>
+    </table>`;
+  return card;
+}
+
+/* ── Sort controls ─────────────────────────────────────────── */
+function setSort(key) {
+  currentSort = key;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('sort-'+key)?.classList.add('active');
+  renderTankGrid();
+}
+
+/* ── Refresh & timing ──────────────────────────────────────── */
+function updateTimestamps() {
+  document.getElementById('last-updated').textContent =
+    'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function tickCountdown() {
+  const el = document.getElementById('next-refresh');
+  if (!el || !nextRefreshAt) return;
+  const secs = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+  const m = Math.floor(secs/60), s = secs%60;
+  el.textContent = `Next refresh in ${m}:${s.toString().padStart(2,'0')}`;
+}
+
+async function doRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  btn.textContent = '⟳ Loading…';
+
+  await loadAll();
+  renderSummary();
+  renderTabs();
+  renderTankGrid();
+  updateTimestamps();
+
+  nextRefreshAt = Date.now() + CONFIG.refreshMinutes * 60 * 1000;
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(doRefresh, CONFIG.refreshMinutes * 60 * 1000);
+
+  btn.disabled = false;
+  btn.textContent = '⟳ Refresh';
+}
+
+function manualRefresh() {
+  clearTimeout(refreshTimer);
+  doRefresh();
+}
+
+/* ── Init ──────────────────────────────────────────────────── */
+async function init() {
+  if (localStorage.getItem('darkMode') === '1') {
+    document.documentElement.classList.add('dark');
+    document.getElementById('dark-toggle').textContent = '☀️';
+  }
+  renderHeader();
+  document.getElementById('tanks-container').innerHTML =
+    '<div class="loading-msg">Loading data…</div>';
+  await doRefresh();
+  setInterval(tickCountdown, 1000);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+
+</body>
+</html>
