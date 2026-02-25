@@ -74,12 +74,12 @@
       font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
     }
     .summary-card .value { font-size: 2rem; font-weight: 800; line-height: 1; color: var(--text); }
-    .summary-card.s-critical { border-left-color: var(--red); }
-    .summary-card.s-critical .value { color: var(--red); }
+    .summary-card.s-optimal  { border-left-color: var(--green); }
+    .summary-card.s-optimal  .value { color: var(--green); }
     .summary-card.s-warning  { border-left-color: var(--yellow); }
     .summary-card.s-warning  .value { color: var(--yellow); }
-    .summary-card.s-normal   { border-left-color: var(--green); }
-    .summary-card.s-normal   .value { color: var(--green); }
+    .summary-card.s-loading  { border-left-color: #3b82f6; }
+    .summary-card.s-loading  .value { color: #3b82f6; }
 
     /* ─── Toolbar (tabs + search) ────────────────────────────── */
     .toolbar {
@@ -134,7 +134,7 @@
     }
     .tank-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.1); }
     .tank-card.warning { border-top-color: var(--yellow); background: var(--yellow-bg); }
-    .tank-card.critical { border-top-color: var(--red); background: var(--red-bg); }
+    .tank-card.optimal { border-top-color: #15803d; background: var(--green-bg); }
 
     .tank-name { font-weight: 700; font-size: .875rem; margin-bottom: .2rem; color: var(--text); }
     .product-badge {
@@ -143,7 +143,7 @@
       margin-bottom: .6rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .tank-card.warning  .product-badge { background: #fde68a; color: #78350f; }
-    .tank-card.critical .product-badge { background: #fecaca; color: #7f1d1d; }
+    .tank-card.optimal  .product-badge { background: #bbf7d0; color: #14532d; }
 
     .fill-bar-bg {
       background: #e2e8f0; border-radius: 999px; height: 6px; margin-bottom: .375rem; overflow: hidden;
@@ -152,7 +152,7 @@
       height: 100%; border-radius: 999px; background: var(--green); transition: width .4s ease;
     }
     .tank-card.warning  .fill-bar { background: #d97706; }
-    .tank-card.critical .fill-bar { background: var(--red); }
+    .tank-card.optimal  .fill-bar { background: #15803d; }
 
     .fill-pct  { font-weight: 800; font-size: 1rem; }
     .fill-vols { font-size: .7rem; color: var(--muted); margin-top: .1rem; opacity: .8; }
@@ -163,7 +163,7 @@
       letter-spacing: .07em; padding: .1rem .4rem; border-radius: 4px;
     }
     .tank-card.warning  .status-chip { background: #fde68a; color: #78350f; }
-    .tank-card.critical .status-chip { background: #fecaca; color: #7f1d1d; }
+    .tank-card.optimal  .status-chip { background: #bbf7d0; color: #14532d; }
 
     /* ─── Setup / Error / Loading ────────────────────────────── */
     .setup-panel {
@@ -216,7 +216,7 @@
     .shipper-table td:nth-child(2),
     .shipper-table td:nth-child(3) { text-align: right; font-variant-numeric: tabular-nums; }
     .tank-card.warning  .shipper-table th { border-bottom-color: #fde68a; }
-    .tank-card.critical .shipper-table th { border-bottom-color: #fecaca; }
+    .tank-card.optimal  .shipper-table th { border-bottom-color: #bbf7d0; }
     .ship-row-under td { background: #fef9c3; }   /* yellow – under by >100k */
     .ship-row-ok    td { background: #d1fae5; }   /* green  – within 5k     */
     .ship-row-over  td { background: #fee2e2; }   /* red    – over by >10k  */
@@ -237,7 +237,7 @@
     html.dark .vessel-badge     { background: #1e2535; }
     html.dark #search-input     { background: var(--surface); color: var(--text); border-color: var(--border); }
     html.dark .row-status-chip.warning  { background: #78350f; color: #fde68a; }
-    html.dark .row-status-chip.critical { background: #7f1d1d; color: #fecaca; }
+    html.dark .row-status-chip.optimal  { background: #14532d; color: #bbf7d0; }
     html.dark .shipper-table td { border-bottom-color: rgba(255,255,255,.05); }
     html.dark .ship-row-under td { background: rgba(251,191,36,.12); }
     html.dark .ship-row-ok    td { background: rgba(34,197,94,.10); }
@@ -279,20 +279,28 @@
       padding: .1rem .35rem; border-radius: 4px; margin-left: .4rem; vertical-align: middle;
     }
     .row-status-chip.warning  { background: #fde68a; color: #78350f; }
-    .row-status-chip.critical { background: #fecaca; color: #7f1d1d; }
+    .row-status-chip.optimal  { background: #bbf7d0; color: #14532d; }
 
     .pct-cell  { display: flex; align-items: center; gap: .625rem; }
     .pct-track { flex: 1; height: 7px; background: var(--border); border-radius: 999px; overflow: hidden; }
     .pct-fill  { height: 100%; border-radius: 999px; transition: width .4s ease; }
-    .pct-fill.normal   { background: var(--green); }
+    .pct-fill.loading  { background: var(--green); }
     .pct-fill.warning  { background: #d97706; }
-    .pct-fill.critical { background: var(--red); }
+    .pct-fill.optimal  { background: #15803d; }
     .pct-fill.unknown  { background: var(--muted); }
     .pct-label { min-width: 3.75rem; text-align: right; font-weight: 700; font-size: .875rem; }
-    .pct-label.normal   { color: var(--green); }
+    .pct-label.loading  { color: var(--green); }
     .pct-label.warning  { color: #d97706; }
-    .pct-label.critical { color: var(--red); }
+    .pct-label.optimal  { color: #15803d; }
     .pct-label.unknown  { color: var(--muted); }
+
+    /* ─── Shared list view ───────────────────────────────────── */
+    .shared-summary-row td {
+      font-weight: 700; background: rgba(0,0,0,.025);
+      border-top: 2px solid var(--border);
+    }
+    html.dark .shared-summary-row td { background: rgba(255,255,255,.04); }
+    .shipper-indent { color: var(--muted); padding-left: 1.75rem !important; font-weight: 400; font-size: .8rem; }
 
     /* ─── Responsive ─────────────────────────────────────────── */
     @media (max-width: 900px)  { .main { padding: 1rem; } .summary-grid { grid-template-columns: repeat(2,1fr); } }
@@ -334,7 +342,7 @@ const CONFIG = {
   /* ── One entry per facility / Google Sheet ───────────────── */
   facilities: [
     {
-      name: "Facility 1",
+      name: "Carboclor",
       csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=1509369466&single=true&output=csv"
       // uses global CONFIG.columns and CONFIG.defaultUnit below
     },
@@ -377,10 +385,10 @@ const CONFIG = {
   defaultUnit: "kg",
 
   /* ── Alert thresholds (fill %) ───────────────────────────── */
-  /* 0% = free/empty (normal), 100% = full (problem)           */
+  /* 100% = full (goal = Optimal), 0% = empty (problem = Warning) */
   thresholds: {
-    critical: 95,   // above this → red  (essentially full)
-    warning:  85    // above this → yellow (getting close to full)
+    optimal: 95    // above this → Optimal (full tanks are the goal)
+    // Warning fires at exactly 0% (empty tank)
   },
 
   /* ── Auto-refresh interval in minutes ───────────────────── */
@@ -414,17 +422,17 @@ const CONFIG = {
       <span class="label">Total Tanks</span>
       <span class="value" id="summary-total">—</span>
     </div>
-    <div class="summary-card s-critical">
-      <span class="label">⛔ Critical</span>
-      <span class="value" id="summary-critical">0</span>
+    <div class="summary-card s-optimal">
+      <span class="label">✓ Optimal</span>
+      <span class="value" id="summary-optimal">0</span>
     </div>
     <div class="summary-card s-warning">
       <span class="label">⚠ Warning</span>
       <span class="value" id="summary-warning">0</span>
     </div>
-    <div class="summary-card s-normal">
-      <span class="label">✓ Normal</span>
-      <span class="value" id="summary-normal">0</span>
+    <div class="summary-card s-loading">
+      <span class="label">⟳ Loading</span>
+      <span class="value" id="summary-loading">0</span>
     </div>
   </div>
 
@@ -514,9 +522,9 @@ function sharedTankStatus(rows, fac) {
   }, 0);
   const pct = capacity > 0 ? Math.min(100, totalStock / capacity * 100) : null;
   if (pct === null)                          return 'unknown';
-  if (pct >= CONFIG.thresholds.critical)     return 'critical';
-  if (pct >= CONFIG.thresholds.warning)      return 'warning';
-  return 'normal';
+  if (pct <= 0)                              return 'warning';  // empty tank
+  if (pct >= CONFIG.thresholds.optimal)      return 'optimal';
+  return 'loading';
 }
 
 function getFacilityTankStatuses(fac) {
@@ -545,16 +553,16 @@ function fillPct(row) {
 
 function statusOf(row) {
   const manual = colVal(row,'status').toLowerCase();
-  if (['critical','alert','error','alarm'].includes(manual)) return 'critical';
-  if (['warning','warn','low'].includes(manual))             return 'warning';
+  if (['optimal'].includes(manual))                return 'optimal';
+  if (['warning','warn','empty'].includes(manual)) return 'warning';
   const pct = fillPct(row);
-  if (pct === null)                               return 'unknown';
-  if (pct >= CONFIG.thresholds.critical)          return 'critical';
-  if (pct >= CONFIG.thresholds.warning)           return 'warning';
-  return 'normal';
+  if (pct === null)                                return 'unknown';
+  if (pct <= 0)                                    return 'warning';  // empty tank
+  if (pct >= CONFIG.thresholds.optimal)            return 'optimal';
+  return 'loading';
 }
 
-function statusWeight(s) { return {critical:0, warning:1, unknown:2, normal:3}[s] ?? 3; }
+function statusWeight(s) { return {warning:0, loading:1, unknown:2, optimal:3}[s] ?? 3; }
 
 function fmtNum(raw) {
   const n = parseFloat((raw||'').replace(/,/g,''));
@@ -599,9 +607,9 @@ function renderHeader() {
 function renderSummary() {
   const statuses = allFacilityData.flatMap(f => getFacilityTankStatuses(f));
   document.getElementById('summary-total').textContent    = statuses.length || '—';
-  document.getElementById('summary-critical').textContent = statuses.filter(s => s==='critical').length;
+  document.getElementById('summary-optimal').textContent  = statuses.filter(s => s==='optimal').length;
   document.getElementById('summary-warning').textContent  = statuses.filter(s => s==='warning').length;
-  document.getElementById('summary-normal').textContent   = statuses.filter(s => s==='normal').length;
+  document.getElementById('summary-loading').textContent  = statuses.filter(s => s==='loading').length;
 }
 
 function renderTabs() {
@@ -610,8 +618,8 @@ function renderTabs() {
   allFacilityData.forEach((f, i) => {
     const btn = document.createElement('button');
     btn.className = 'tab' + (i === activeFacility ? ' active' : '');
-    const critCount = getFacilityTankStatuses(f).filter(s => s==='critical').length;
-    btn.textContent  = f.name + (critCount ? ` (${critCount} ⛔)` : '');
+    const warnCount = getFacilityTankStatuses(f).filter(s => s==='warning').length;
+    btn.textContent  = f.name + (warnCount ? ` (${warnCount} ⚠)` : '');
     btn.onclick = () => { activeFacility = i; renderTabs(); renderTankGrid(); };
     wrap.appendChild(btn);
   });
@@ -657,24 +665,35 @@ function renderTankGrid() {
     return;
   }
 
-  // ── Shared facility: group rows by tank, render one card per tank ──
+  // ── Shared facility: group rows by tank, render as list or cards ──
   if (fac.type === 'shared') {
     const facCols = fac.columns || CONFIG.columns;
     const groups  = groupByTank(fac.tanks, facCols);
-    const grid    = document.createElement('div');
-    grid.className = 'tank-grid';
-    let shown = 0;
+    // Filter groups by search query
+    const filteredGroups = {};
     Object.entries(groups).forEach(([tankId, rows]) => {
       if (query) {
         const product  = colVal(rows[0], 'product', facCols).toLowerCase();
         const shippers = rows.map(r => colVal(r, 'shipper', facCols).toLowerCase()).join(' ');
         if (!tankId.toLowerCase().includes(query) && !product.includes(query) && !shippers.includes(query)) return;
       }
-      grid.appendChild(buildSharedCard(tankId, rows, fac));
-      shown++;
+      filteredGroups[tankId] = rows;
     });
-    if (!shown) grid.innerHTML = `<div class="no-results">No tanks match your search.</div>`;
-    wrap.appendChild(grid);
+    if (!Object.keys(filteredGroups).length) {
+      wrap.innerHTML = `<div class="no-results">No tanks match your search.</div>`;
+      return;
+    }
+    if (currentView === 'list') {
+      const tableWrap = document.createElement('div');
+      tableWrap.className = 'table-wrap';
+      tableWrap.appendChild(buildSharedList(filteredGroups, fac));
+      wrap.appendChild(tableWrap);
+    } else {
+      const grid = document.createElement('div');
+      grid.className = 'tank-grid';
+      Object.entries(filteredGroups).forEach(([tankId, rows]) => grid.appendChild(buildSharedCard(tankId, rows, fac)));
+      wrap.appendChild(grid);
+    }
     return;
   }
 
@@ -724,11 +743,11 @@ function buildCard(row) {
   const unitStr = unit ? ` ${unit}` : '';
 
   const card = document.createElement('div');
-  card.className = `tank-card${status !== 'normal' && status !== 'unknown' ? ' '+status : ''}`;
+  card.className = `tank-card${(status === 'optimal' || status === 'warning') ? ' '+status : ''}`;
 
   const pctDisp   = pct !== null ? pct.toFixed(1) + '%' : '—';
   const barWidth  = pct !== null ? pct.toFixed(1) : 0;
-  const chip      = status !== 'normal' && status !== 'unknown'
+  const chip      = (status === 'optimal' || status === 'warning')
                     ? `<span class="status-chip">${status}</span>` : '';
   const volLine   = (vol && cap)
                     ? `${vol}${unitStr} / ${cap}${unitStr}`
@@ -768,7 +787,7 @@ function buildList(tanks) {
     const cap      = fmtNum(colVal(row,'capacity'));
     const pctDisp  = pct !== null ? pct.toFixed(2) + '%' : '—';
     const barWidth = pct !== null ? pct.toFixed(1) : 0;
-    const chip     = (status === 'critical' || status === 'warning')
+    const chip     = (status === 'optimal' || status === 'warning')
                      ? `<span class="row-status-chip ${status}">${status}</span>` : '';
 
     const tr = document.createElement('tr');
@@ -784,6 +803,94 @@ function buildList(tanks) {
         </div>
       </td>`;
     tbody.appendChild(tr);
+  });
+  return table;
+}
+
+function buildSharedList(groups, fac) {
+  const facCols  = fac.columns || CONFIG.columns;
+  const unit     = fac.defaultUnit || CONFIG.defaultUnit || '';
+  const unitStr  = unit ? ` ${unit}` : '';
+  const capacity = fac.capacity || 0;
+
+  const table = document.createElement('table');
+  table.className = 'tank-table';
+  table.innerHTML = `<thead><tr>
+    <th>Tank</th>
+    <th>Product</th>
+    <th>Vessel</th>
+    <th>Shipper</th>
+    <th class="col-num">Stock (kg)</th>
+    <th class="col-num">Nominated (kg)</th>
+    <th class="col-pct">% Used</th>
+  </tr></thead><tbody></tbody>`;
+  const tbody = table.querySelector('tbody');
+
+  Object.entries(groups).forEach(([tankId, rows]) => {
+    const totalStock = rows.reduce((sum, row) => {
+      const v = parseFloat(colVal(row, 'volume', facCols).replace(/,/g,''));
+      return sum + (isNaN(v) ? 0 : v);
+    }, 0);
+    const pct     = capacity > 0 ? Math.min(100, totalStock / capacity * 100) : null;
+    const status  = sharedTankStatus(rows, fac);
+    const product = colVal(rows[0], 'product', facCols);
+    const vessels = [...new Set(rows.map(r => colVal(r, 'vessel', facCols)).filter(Boolean))].join(', ');
+    const pctDisp  = pct !== null ? pct.toFixed(1) + '%' : '—';
+    const barWidth = pct !== null ? pct.toFixed(1) : 0;
+    const chip = (status === 'optimal' || status === 'warning')
+                 ? `<span class="row-status-chip ${status}">${status}</span>` : '';
+
+    // ── Tank summary row ──
+    const summaryTr = document.createElement('tr');
+    summaryTr.className = 'shared-summary-row';
+    summaryTr.innerHTML = `
+      <td class="col-tank">Tank ${esc(tankId)}${chip}</td>
+      <td class="col-product">${esc(product)}</td>
+      <td class="col-product">${esc(vessels)}</td>
+      <td class="col-product" style="color:var(--muted)">— total —</td>
+      <td class="col-num">${totalStock.toLocaleString()}${esc(unitStr)}</td>
+      <td class="col-num">${capacity.toLocaleString()}${esc(unitStr)}</td>
+      <td class="col-pct">
+        <div class="pct-cell">
+          <div class="pct-track"><div class="pct-fill ${status}" style="width:${barWidth}%"></div></div>
+          <span class="pct-label ${status}">${pctDisp}</span>
+        </div>
+      </td>`;
+    tbody.appendChild(summaryTr);
+
+    // ── One row per shipper ──
+    rows.forEach(row => {
+      const shipper      = colVal(row, 'shipper',   facCols);
+      const stockNum     = parseFloat(colVal(row, 'volume',    facCols).replace(/,/g,'')) || 0;
+      const nominatedNum = parseFloat(colVal(row, 'nominated', facCols).replace(/,/g,'')) || 0;
+      const diff         = stockNum - nominatedNum;
+      let rowClass = '';
+      if      (diff < -100000)         rowClass = 'ship-row-under';
+      else if (Math.abs(diff) <= 5000) rowClass = 'ship-row-ok';
+      else if (diff > 10000)           rowClass = 'ship-row-over';
+
+      const sPct      = nominatedNum > 0 ? Math.min(200, stockNum / nominatedNum * 100) : null;
+      const sPctDisp  = sPct !== null ? sPct.toFixed(1) + '%' : '—';
+      const sBarWidth = sPct !== null ? Math.min(100, sPct).toFixed(1) : 0;
+      const sStatus   = sPct !== null && sPct >= 95 ? 'optimal' : 'loading';
+
+      const tr = document.createElement('tr');
+      tr.className = rowClass;
+      tr.innerHTML = `
+        <td></td>
+        <td></td>
+        <td></td>
+        <td class="col-tank shipper-indent">↳ ${esc(shipper)}</td>
+        <td class="col-num">${fmtNum(colVal(row, 'volume',    facCols))}${esc(unitStr)}</td>
+        <td class="col-num">${fmtNum(colVal(row, 'nominated', facCols))}${esc(unitStr)}</td>
+        <td class="col-pct">
+          <div class="pct-cell">
+            <div class="pct-track"><div class="pct-fill ${sStatus}" style="width:${sBarWidth}%"></div></div>
+            <span class="pct-label ${sStatus}">${sPctDisp}</span>
+          </div>
+        </td>`;
+      tbody.appendChild(tr);
+    });
   });
   return table;
 }
@@ -807,7 +914,7 @@ function buildSharedCard(tankId, rows, fac) {
 
   const pctDisp  = pct !== null ? pct.toFixed(1) + '%' : '—';
   const barWidth = pct !== null ? pct.toFixed(1) : 0;
-  const chip     = status !== 'normal' && status !== 'unknown'
+  const chip     = (status === 'optimal' || status === 'warning')
                    ? `<span class="status-chip">${status}</span>` : '';
 
   const shipperRows = rows.map(row => {
@@ -830,7 +937,7 @@ function buildSharedCard(tankId, rows, fac) {
   }).join('');
 
   const card = document.createElement('div');
-  card.className = `tank-card shared-card${status !== 'normal' && status !== 'unknown' ? ' '+status : ''}`;
+  card.className = `tank-card shared-card${(status === 'optimal' || status === 'warning') ? ' '+status : ''}`;
   card.innerHTML = `
     ${chip}
     <div class="shared-header">
