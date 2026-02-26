@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tank Storage Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <style>
     /* ─── Design tokens ─────────────────────────────────────── */
     :root {
@@ -279,7 +281,7 @@
       padding: .1rem .35rem; border-radius: 4px; margin-left: .4rem; vertical-align: middle;
     }
     .row-status-chip.warning  { background: #fde68a; color: #78350f; }
-    .row-status-chip.optimal  { background: #bbf7d0; color: #14532d; }
+    .row-status-chip.critical { background: #fecaca; color: #7f1d1d; }
 
     .pct-cell  { display: flex; align-items: center; gap: .625rem; }
     .pct-track { flex: 1; height: 7px; background: var(--border); border-radius: 999px; overflow: hidden; }
@@ -302,6 +304,34 @@
     html.dark .shared-summary-row td { background: rgba(255,255,255,.04); }
     .shipper-indent { color: var(--muted); padding-left: 1.75rem !important; font-weight: 400; font-size: .8rem; }
 
+    /* ─── History chart ──────────────────────────────────────── */
+    .chart-section {
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 1.25rem 1.5rem; margin-top: 1.25rem;
+    }
+    .chart-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 1rem; flex-wrap: wrap; gap: .5rem;
+    }
+    .chart-title { font-size: .9rem; font-weight: 700; color: var(--text); }
+    .chart-title span { font-weight: 400; color: var(--muted); font-size: .8rem; margin-left: .4rem; }
+    .period-btns { display: flex; gap: .3rem; flex-wrap: wrap; }
+    .period-btn {
+      padding: .2rem .55rem; border-radius: 4px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted); font-size: .75rem;
+      cursor: pointer; transition: all .15s;
+    }
+    .period-btn:hover  { border-color: var(--primary-light); color: var(--primary); }
+    .period-btn.active { background: var(--primary); border-color: var(--primary); color: white; }
+    .chart-canvas-wrap { position: relative; height: 300px; }
+    .chart-loading { text-align: center; padding: 2rem; color: var(--muted); font-size: .875rem; }
+    .chart-legend {
+      display: flex; gap: 1.25rem; margin-top: .75rem; flex-wrap: wrap;
+    }
+    .legend-item { display: flex; align-items: center; gap: .35rem; font-size: .75rem; color: var(--muted); }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .legend-line { width: 20px; height: 2px; flex-shrink: 0; }
+
     /* ─── Responsive ─────────────────────────────────────────── */
     @media (max-width: 900px)  { .main { padding: 1rem; } .summary-grid { grid-template-columns: repeat(2,1fr); } }
     @media (max-width: 700px)  {
@@ -309,11 +339,35 @@
       .col-pct { min-width: 120px; }
     }
     @media (max-width: 600px)  {
-      .header { padding: .875rem 1rem; }
+      /* ── Header ── */
+      .header { padding: .75rem 1rem; }
+      .header-title { font-size: .875rem; }
+      .header-meta { display: none; }          /* hide "Updated…" & countdown */
+
+      /* ── Summary / toolbar ── */
       .summary-grid { grid-template-columns: repeat(2,1fr); gap: .625rem; }
       .toolbar { flex-direction: column; align-items: stretch; }
       #search-input { width: 100%; }
+
+      /* ── Sort row ── */
+      .sort-row { flex-wrap: wrap; row-gap: .4rem; }
+      .sort-btn  { white-space: nowrap; }        /* stop "Fill %" from breaking */
+      .sort-row > span { margin-left: 0 !important; } /* un-push view toggle */
+
+      /* ── Cards ── */
       .tank-grid { grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: .75rem; }
+
+      /* ── Shared TPR table: hide Product & Vessel columns ── */
+      .col-shared-meta { display: none; }
+      .col-pct { min-width: 90px !important; }
+
+      /* ── Table horizontal scroll fallback ── */
+      .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+      /* ── Chart ── */
+      .chart-section { padding: 1rem; }
+      .chart-canvas-wrap { height: 210px; }
+      .chart-header { flex-direction: column; align-items: flex-start; gap: .5rem; }
     }
   </style>
 </head>
@@ -365,7 +419,11 @@ const CONFIG = {
         vessel:    "Vessel",
         nominated: "Nominated Qtty KG"
       },
-      defaultUnit: "kg"
+      defaultUnit: "kg",
+
+      // ── History tab: "Tank 32" sheet published as CSV ─────────
+      // File → Share → Publish to web → select "Tank 32" tab → CSV
+      historyUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTIu2Ftq3WV5oNIJjgCti8sQHjeKb9huwz3icRuf-ARnkiuLm17h40sRgDqDgbY7wIVo1Y62xKtcBFF/pub?gid=0&single=true&output=csv"
     }
   ],
 
@@ -475,10 +533,263 @@ let currentView     = 'list';
 let refreshTimer    = null;
 let nextRefreshAt   = null;
 
+/* ── Chart state ───────────────────────────────────────────── */
+let chartInstance   = null;
+let chartPeriod     = '30d';
+let historyCache    = {};   // keyed by historyUrl
+
+/* ── Chart helpers ─────────────────────────────────────────── */
+async function fetchHistory(url) {
+  if (historyCache[url]) return historyCache[url];
+  const resp = await fetch(url, { cache: 'no-cache' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const text = await resp.text();
+  const { data } = Papa.parse(text, { header: false, skipEmptyLines: false });
+  // Rows with a valid DD/MM/YYYY or D/M/YYYY date in column index 1
+  const dateRe = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
+  const rows = data.filter(r => r[1] && dateRe.test(r[1].trim()));
+  historyCache[url] = rows;
+  return rows;
+}
+
+function parseDate(str) {
+  const [d, m, y] = str.trim().split('/').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function getDailyPoints(rows) {
+  // rows: each is an array; col[1]=date, col[8]=Stock Total (in MT)
+  // Take the last stock value per calendar day; convert MT→kg
+  const byDay = {};
+  const now = new Date();
+  const minYear = 2000;
+  const maxYear = now.getFullYear() + 1; // allow up to 1 year in future
+  rows.forEach(r => {
+    const dateStr = r[1].trim();
+    const val = parseFloat(r[8]);
+    if (isNaN(val)) return;
+    const parsed = parseDate(dateStr);
+    const yr = parsed.getFullYear();
+    if (yr < minYear || yr > maxYear) return; // reject typo years like 5024
+    byDay[dateStr] = val;
+  });
+  return Object.entries(byDay)
+    .map(([ds, mt]) => ({ date: parseDate(ds), stock: mt * 1000 })) // MT → kg
+    .sort((a, b) => a.date - b.date);
+}
+
+function filterByPeriod(points, period) {
+  if (period === 'all') return points;
+  const now   = new Date();
+  const cutoff = new Date(now);
+  if      (period === '7d')  cutoff.setDate(now.getDate() - 7);
+  else if (period === '30d') cutoff.setDate(now.getDate() - 30);
+  else if (period === '90d') cutoff.setDate(now.getDate() - 90);
+  else if (period === '6m')  cutoff.setMonth(now.getMonth() - 6);
+  else if (period === '1y')  cutoff.setFullYear(now.getFullYear() - 1);
+  return points.filter(p => p.date >= cutoff);
+}
+
+function chartColors() {
+  const dark = document.documentElement.classList.contains('dark');
+  return {
+    text:    dark ? '#e2e8f0' : '#1a202c',
+    muted:   dark ? '#8892a4' : '#64748b',
+    border:  dark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.07)',
+    stock:   '#16a34a',
+    stockBg: dark ? 'rgba(22,163,74,.15)' : 'rgba(22,163,74,.10)',
+    cap:     dark ? 'rgba(255,255,255,.25)' : 'rgba(100,116,139,.4)',
+  };
+}
+
+function buildChartJS(points, capacity) {
+  const canvas = document.getElementById('history-canvas');
+  if (!canvas) return;
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  const c = chartColors();
+  const capMT = capacity / 1000; // for tooltip display
+
+  chartInstance = new Chart(canvas, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Stock (kg)',
+          data: points.map(p => ({ x: p.date, y: p.stock })),
+          borderColor: c.stock,
+          backgroundColor: c.stockBg,
+          fill: true,
+          tension: 0.3,
+          pointRadius: points.length > 120 ? 0 : 2,
+          pointHoverRadius: 5,
+          borderWidth: 2,
+        },
+        {
+          label: 'Capacity',
+          data: points.length
+            ? [{ x: points[0].date, y: capacity }, { x: points[points.length-1].date, y: capacity }]
+            : [],
+          borderColor: c.cap,
+          borderDash: [6, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          type: 'time',
+          time: {
+            tooltipFormat: 'dd/MM/yyyy',
+            minUnit: 'day',
+            displayFormats: { day:'dd MMM', week:'dd MMM', month:'MMM yy', year:'yyyy' }
+          },
+          ticks: { color: c.muted, maxTicksLimit: 8 },
+          grid:  { color: c.border },
+        },
+        y: {
+          min: 0,
+          suggestedMax: capacity * 1.08,
+          ticks: {
+            color: c.muted,
+            callback: v => (v / 1000).toFixed(0) + ' MT'
+          },
+          grid: { color: c.border },
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              if (ctx.dataset.label === 'Capacity')
+                return `Capacity: ${(ctx.raw.y/1000).toFixed(0)} MT`;
+              const kg  = ctx.raw.y;
+              const mt  = (kg / 1000).toFixed(1);
+              const pct = capacity > 0 ? (kg / capacity * 100).toFixed(1) : '—';
+              return `Stock: ${mt} MT  (${pct}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function updateChartColors() {
+  if (!chartInstance) return;
+  const c = chartColors();
+  chartInstance.options.scales.x.ticks.color = c.muted;
+  chartInstance.options.scales.x.grid.color  = c.border;
+  chartInstance.options.scales.y.ticks.color = c.muted;
+  chartInstance.options.scales.y.grid.color  = c.border;
+  chartInstance.data.datasets[0].borderColor     = c.stock;
+  chartInstance.data.datasets[0].backgroundColor = c.stockBg;
+  chartInstance.data.datasets[1].borderColor     = c.cap;
+  chartInstance.update();
+}
+
+async function renderChart(fac) {
+  const wrap = document.getElementById('chart-canvas-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="chart-loading">Loading history…</div>';
+  try {
+    const rows   = await fetchHistory(fac.historyUrl);
+    const all    = getDailyPoints(rows);
+    const points = filterByPeriod(all, chartPeriod);
+    if (!points.length) {
+      wrap.innerHTML = '<div class="chart-loading">No data for selected period.</div>';
+      return;
+    }
+    wrap.innerHTML = '<canvas id="history-canvas"></canvas>';
+    buildChartJS(points, fac.capacity);
+    // Update data-point count label
+    const lbl = document.getElementById('chart-pts-label');
+    if (lbl) lbl.textContent = `${points.length} data points`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="chart-loading" style="color:var(--red)">Could not load history: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderChartSection(fac) {
+  if (!fac.historyUrl || fac.historyUrl.includes('PASTE_YOUR')) {
+    const msg = document.createElement('div');
+    msg.className = 'chart-section';
+    msg.innerHTML = `<div class="chart-header"><span class="chart-title">Tank 32 — Stock History</span></div>
+      <div class="chart-loading">
+        To enable the history chart, publish the <strong>Tank 32</strong> sheet tab to web as CSV
+        and paste the URL into <code>historyUrl</code> in CONFIG.
+      </div>`;
+    document.getElementById('tanks-container').appendChild(msg);
+    return;
+  }
+
+  const PERIODS = [
+    { key:'7d',  label:'7D'  },
+    { key:'30d', label:'30D' },
+    { key:'90d', label:'90D' },
+    { key:'6m',  label:'6M'  },
+    { key:'1y',  label:'1Y'  },
+    { key:'all', label:'All' },
+  ];
+
+  const section = document.createElement('div');
+  section.className = 'chart-section';
+  section.id = 'chart-section';
+  section.innerHTML = `
+    <div class="chart-header">
+      <div class="chart-title">
+        Tank 32 — Stock History
+        <span id="chart-pts-label"></span>
+      </div>
+      <div class="period-btns">
+        ${PERIODS.map(p =>
+          `<button class="period-btn${p.key === chartPeriod ? ' active' : ''}"
+            onclick="setPeriod('${p.key}')">${p.label}</button>`
+        ).join('')}
+      </div>
+    </div>
+    <div class="chart-canvas-wrap" id="chart-canvas-wrap">
+      <div class="chart-loading">Loading history…</div>
+    </div>
+    <div class="chart-legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#16a34a"></div>
+        Stock total
+      </div>
+      <div class="legend-item">
+        <div class="legend-line" style="background:rgba(100,116,139,.5);border-top:2px dashed rgba(100,116,139,.5)"></div>
+        Capacity (1,380 MT)
+      </div>
+    </div>`;
+  document.getElementById('tanks-container').appendChild(section);
+  renderChart(fac);
+}
+
+function setPeriod(p) {
+  chartPeriod = p;
+  document.querySelectorAll('.period-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase() === p || b.onclick.toString().includes(`'${p}'`));
+  });
+  const fac = allFacilityData[activeFacility];
+  if (fac) renderChart(fac);
+}
+
+function destroyChart() {
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+}
+
 function toggleDark() {
   const on = document.documentElement.classList.toggle('dark');
   document.getElementById('dark-toggle').textContent = on ? '☀️' : '🌙';
   localStorage.setItem('darkMode', on ? '1' : '0');
+  updateChartColors();
 }
 
 function setView(v) {
@@ -629,6 +940,7 @@ function renderTankGrid() {
   const wrap   = document.getElementById('tanks-container');
   const query  = (document.getElementById('search-input').value || '').toLowerCase();
   const fac    = allFacilityData[activeFacility];
+  destroyChart();
   wrap.innerHTML = '';
 
   if (!fac) return;
@@ -694,6 +1006,7 @@ function renderTankGrid() {
       Object.entries(filteredGroups).forEach(([tankId, rows]) => grid.appendChild(buildSharedCard(tankId, rows, fac)));
       wrap.appendChild(grid);
     }
+    renderChartSection(fac);
     return;
   }
 
@@ -817,8 +1130,8 @@ function buildSharedList(groups, fac) {
   table.className = 'tank-table';
   table.innerHTML = `<thead><tr>
     <th>Tank</th>
-    <th>Product</th>
-    <th>Vessel</th>
+    <th class="col-shared-meta">Product</th>
+    <th class="col-shared-meta">Vessel</th>
     <th>Shipper</th>
     <th class="col-num">Stock (kg)</th>
     <th class="col-num">Nominated (kg)</th>
@@ -845,8 +1158,8 @@ function buildSharedList(groups, fac) {
     summaryTr.className = 'shared-summary-row';
     summaryTr.innerHTML = `
       <td class="col-tank">Tank ${esc(tankId)}${chip}</td>
-      <td class="col-product">${esc(product)}</td>
-      <td class="col-product">${esc(vessels)}</td>
+      <td class="col-product col-shared-meta">${esc(product)}</td>
+      <td class="col-product col-shared-meta">${esc(vessels)}</td>
       <td class="col-product" style="color:var(--muted)">— total —</td>
       <td class="col-num">${totalStock.toLocaleString()}${esc(unitStr)}</td>
       <td class="col-num">${capacity.toLocaleString()}${esc(unitStr)}</td>
@@ -878,8 +1191,8 @@ function buildSharedList(groups, fac) {
       tr.className = rowClass;
       tr.innerHTML = `
         <td></td>
-        <td></td>
-        <td></td>
+        <td class="col-shared-meta"></td>
+        <td class="col-shared-meta"></td>
         <td class="col-tank shipper-indent">↳ ${esc(shipper)}</td>
         <td class="col-num">${fmtNum(colVal(row, 'volume',    facCols))}${esc(unitStr)}</td>
         <td class="col-num">${fmtNum(colVal(row, 'nominated', facCols))}${esc(unitStr)}</td>
