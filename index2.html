@@ -543,7 +543,7 @@ const CONFIG = {
 let allFacilityData = [];
 let activeFacility  = 0;
 let currentSort     = 'status';
-let currentView     = 'list';
+let currentView     = window.innerWidth <= 768 ? 'cards' : 'list';
 let refreshTimer    = null;
 let nextRefreshAt   = null;
 
@@ -555,6 +555,7 @@ let historyCache   = {};   // url → rows (for TPR)
 /* ── Tank detail state ─────────────────────────────────────── */
 let historyFeedCache  = {};   // url → [{row, year, date}]
 let currentTankId     = null;
+let currentTankStock  = 0;    // actual stock from main CSV for current tank
 let tankTimeline      = [];   // full computed timeline for current tank
 let tankChartInstance = null;
 let tankChartPeriod   = '90d';
@@ -818,11 +819,24 @@ function updateTankChartColors() {
   tankChartInstance.update();
 }
 
-function renderTankChartSection(timeline, capacity) {
+function renderTankChartSection(timeline, capacity, currentStock) {
   const wrap = document.getElementById('detail-chart-canvas-wrap');
   if (!wrap) return;
 
-  const points = filterByPeriod(timeline, tankChartPeriod);
+  let points = filterByPeriod(timeline, tankChartPeriod);
+
+  // Always anchor the last point to today's actual stock (from the main CSV).
+  // This ensures period changes never make the chart endpoint appear different —
+  // only the visible history range changes, the end value stays constant.
+  if (typeof currentStock === 'number' && currentStock >= 0 && points.length > 0) {
+    const today = new Date();
+    const last  = points[points.length - 1];
+    // Only append if last transaction was more than 1 hour ago (avoid duplicate)
+    if (!last || (today - last.date) > 3_600_000) {
+      points = [...points, { date: today, stock: currentStock, kgs: 0,
+                             supplier: '', material: 'Current', feedLabel: '' }];
+    }
+  }
 
   // Update period buttons
   document.querySelectorAll('#detail-period-btns .period-btn').forEach(b => {
@@ -863,7 +877,7 @@ function setTankPeriod(p) {
   tankChartPeriod = p;
   if (currentTankId && tankTimeline.length) {
     const capacity = getTankCapacity(currentTankId);
-    renderTankChartSection(tankTimeline, capacity);
+    renderTankChartSection(tankTimeline, capacity, currentTankStock);
   }
 }
 
@@ -1015,8 +1029,13 @@ async function showTankDetail(tankId) {
     tankTimeline   = buildTankTimeline(items);
     const capacity = getTankCapacity(tankId);
 
+    // Capture actual stock from main CSV so the chart can anchor its endpoint
+    const carbFac = allFacilityData.find(f => f.showHistory);
+    const mainRow = carbFac?.tanks.find(r => colVal(r,'name') === String(tankId));
+    currentTankStock = mainRow ? parseKg(colVal(mainRow,'volume')) : 0;
+
     renderDetailStats(tankId, tankTimeline);
-    renderTankChartSection(tankTimeline, capacity);
+    renderTankChartSection(tankTimeline, capacity, currentTankStock);
     renderActivityTable(tankTimeline);
   } catch(e) {
     document.getElementById('detail-chart-canvas-wrap').innerHTML =
@@ -1027,8 +1046,9 @@ async function showTankDetail(tankId) {
 function showMainView() {
   // Destroy tank chart to free memory
   if (tankChartInstance) { tankChartInstance.destroy(); tankChartInstance = null; }
-  currentTankId  = null;
-  tankTimeline   = [];
+  currentTankId    = null;
+  currentTankStock = 0;
+  tankTimeline     = [];
 
   document.getElementById('tank-detail').style.display  = 'none';
   document.getElementById('main-content').style.display = 'block';
@@ -1744,6 +1764,10 @@ async function init() {
     document.documentElement.classList.add('dark');
     document.getElementById('dark-toggle').textContent = '☀️';
   }
+
+  // Sync view toggle buttons with initial view (cards on mobile, list on desktop)
+  document.getElementById('view-list')?.classList.toggle('active', currentView === 'list');
+  document.getElementById('view-cards')?.classList.toggle('active', currentView === 'cards');
 
   renderHeader();
   document.getElementById('tanks-container').innerHTML =
