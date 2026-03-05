@@ -287,6 +287,16 @@
     .kgs-neg { color: var(--red);   font-weight: 600; }
     .activity-section { margin-top: 1.25rem; }
 
+    /* ─── Carboclor sub-tabs (Tanks / Shippers) ─────────────── */
+    .subtabs-row { margin-bottom: .875rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .subtab {
+      padding: .35rem .875rem; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--surface);
+      cursor: pointer; font-size: .8125rem; color: var(--muted); transition: all .15s; font-weight: 500;
+    }
+    .subtab:hover  { border-color: var(--primary-light); color: var(--primary); }
+    .subtab.active { background: var(--primary-light); border-color: var(--primary-light); color: white; font-weight: 600; }
+
     /* History hint badge on facility title */
     .history-hint {
       display: inline-block; font-size: .65rem; font-weight: 600;
@@ -295,9 +305,16 @@
     }
     html.dark .history-hint { background: #1e2d5c; color: #818cf8; }
 
+    /* Stock value shown inline on mobile when col-num columns are hidden */
+    .mobile-stock { display: none; font-size: .72rem; color: var(--muted); font-weight: 400; margin-left: .3rem; }
+
     /* ─── Responsive ─────────────────────────────────────────── */
     @media (max-width: 900px)  { .main { padding: 1rem; } .summary-grid { grid-template-columns: repeat(2,1fr); } }
-    @media (max-width: 700px)  { .tank-table .col-num { display: none; } .col-pct { min-width: 120px; } }
+    @media (max-width: 700px)  {
+      .tank-table .col-num { display: none; }
+      .col-pct { min-width: 120px; }
+      .mobile-stock { display: inline; }
+    }
     @media (max-width: 600px)  {
       .header { padding: .75rem 1rem; }
       .header-title { font-size: .875rem; }
@@ -373,6 +390,10 @@ const CONFIG = {
       historyUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTIu2Ftq3WV5oNIJjgCti8sQHjeKb9huwz3icRuf-ARnkiuLm17h40sRgDqDgbY7wIVo1Y62xKtcBFF/pub?gid=0&single=true&output=csv"
     }
   ],
+
+  /* ── Carboclor shipper breakdown feed ────────────────────── */
+  /* Columns: Product, Shipper, Stock, Nominted (=Nominated), Vessel */
+  carboclorShippersUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=819612871&single=true&output=csv",
 
   /* ── Carboclor tank history feeds ────────────────────────── */
   /* Date format in CSV: D/M  (no year — inferred automatically) */
@@ -455,7 +476,13 @@ const CONFIG = {
       </div>
     </div>
 
-    <div class="sort-row">
+    <!-- Sub-tabs shown only when a facility with showHistory (Carboclor) is active -->
+    <div class="subtabs-row" id="subtabs-row" style="display:none">
+      <button class="subtab active" id="subtab-tanks"    onclick="setSubTab('tanks')">🗄 Tanks</button>
+      <button class="subtab"        id="subtab-shippers" onclick="setSubTab('shippers')">📦 Shippers</button>
+    </div>
+
+    <div class="sort-row" id="sort-row">
       Sort by:
       <button class="sort-btn active" id="sort-status"   onclick="setSort('status')">Status</button>
       <button class="sort-btn"        id="sort-fill-asc" onclick="setSort('fill-asc')">Fill % ↑</button>
@@ -551,6 +578,10 @@ let nextRefreshAt   = null;
 let chartInstance  = null;
 let chartPeriod    = '30d';
 let historyCache   = {};   // url → rows (for TPR)
+
+/* ── Carboclor sub-tab state ───────────────────────────────── */
+let carboclorSubTab = 'tanks';  // 'tanks' | 'shippers'
+let shippersCache   = null;     // normalised shipper rows (invalidated on refresh)
 
 /* ── Tank detail state ─────────────────────────────────────── */
 let historyFeedCache  = {};   // url → [{row, year, date}]
@@ -1376,9 +1407,23 @@ function renderTabs() {
     const warnCount = getFacilityTankStatuses(f).filter(s => s==='warning').length;
     const histBadge = f.showHistory ? `<span class="history-hint">history</span>` : '';
     btn.innerHTML = esc(f.name) + (warnCount ? ` (${warnCount} ⚠)` : '') + histBadge;
-    btn.onclick = () => { activeFacility = i; renderTabs(); renderTankGrid(); };
+    btn.onclick = () => {
+      activeFacility  = i;
+      carboclorSubTab = 'tanks';  // reset sub-tab when switching facility
+      renderTabs();
+      renderTankGrid();
+    };
     wrap.appendChild(btn);
   });
+
+  // Show sub-tabs only for Carboclor (showHistory facility)
+  const fac = allFacilityData[activeFacility];
+  const showSub = fac?.showHistory === true;
+  document.getElementById('subtabs-row').style.display = showSub ? '' : 'none';
+  document.getElementById('sort-row').style.display    = (!showSub || carboclorSubTab === 'tanks') ? '' : 'none';
+  // Sync sub-tab button states
+  document.getElementById('subtab-tanks')?.classList.toggle('active',    carboclorSubTab === 'tanks');
+  document.getElementById('subtab-shippers')?.classList.toggle('active', carboclorSubTab === 'shippers');
 }
 
 
@@ -1391,6 +1436,12 @@ function renderTankGrid() {
   const fac   = allFacilityData[activeFacility];
   destroyChart();
   wrap.innerHTML = '';
+
+  // Route to shippers sub-tab if active on a history-enabled facility
+  if (fac?.showHistory && carboclorSubTab === 'shippers') {
+    renderShippersView();
+    return;
+  }
 
   if (!fac) return;
 
@@ -1599,7 +1650,7 @@ function buildSharedList(groups, fac) {
     const summaryTr = document.createElement('tr');
     summaryTr.className = 'shared-summary-row';
     summaryTr.innerHTML = `
-      <td class="col-tank">Tank ${esc(tankId)}${chip}</td>
+      <td class="col-tank">Tank ${esc(tankId)}${chip}<span class="mobile-stock">${totalStock.toLocaleString()}${esc(unitStr)} / ${capacity > 0 ? capacity.toLocaleString()+esc(unitStr) : '—'}</span></td>
       <td class="col-product col-shared-meta">${esc(product)}</td>
       <td class="col-product col-shared-meta">${esc(vessels)}</td>
       <td class="col-product" style="color:var(--muted)">— total —</td>
@@ -1632,7 +1683,7 @@ function buildSharedList(groups, fac) {
         <td></td>
         <td class="col-shared-meta"></td>
         <td class="col-shared-meta"></td>
-        <td class="col-tank shipper-indent">↳ ${esc(shipper)}</td>
+        <td class="col-tank shipper-indent">↳ ${esc(shipper)}<span class="mobile-stock">${stockNum.toLocaleString()}${esc(unitStr)}</span></td>
         <td class="col-num">${fmtNum(colVal(row,'volume',facCols))}${esc(unitStr)}</td>
         <td class="col-num">${fmtNum(colVal(row,'nominated',facCols))}${esc(unitStr)}</td>
         <td class="col-pct">
@@ -1703,6 +1754,214 @@ function buildSharedCard(tankId, rows, fac) {
 
 
 /* ══════════════════════════════════════════════════════════════
+   CARBOCLOR SHIPPERS SUB-TAB
+   ══════════════════════════════════════════════════════════════ */
+
+/* Switch between Tanks and Shippers sub-tabs */
+function setSubTab(tab) {
+  carboclorSubTab = tab;
+  document.getElementById('subtab-tanks')?.classList.toggle('active',    tab === 'tanks');
+  document.getElementById('subtab-shippers')?.classList.toggle('active', tab === 'shippers');
+  // Sort row only makes sense in the Tanks view
+  document.getElementById('sort-row').style.display = tab === 'tanks' ? '' : 'none';
+  renderTankGrid();
+}
+
+/* Fetch and normalise the shipper CSV (cached until manual refresh) */
+async function fetchShippers() {
+  if (shippersCache) return shippersCache;
+  const url  = CONFIG.carboclorShippersUrl;
+  const resp = await fetch(url, { cache: 'no-cache' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const text = await resp.text();
+  const { data } = Papa.parse(text, { header: true, skipEmptyLines: true });
+  // Normalise column names (fixes "Nominted" typo) and drop the Total row
+  shippersCache = data
+    .filter(r => {
+      const p = String(r['Product'] || '').trim();
+      return p && p.toLowerCase() !== 'total';
+    })
+    .map(r => ({
+      Product:   String(r['Product']  || '').trim(),
+      Shipper:   String(r['Shipper']  || '').trim(),
+      Stock:     String(r['Stock']    || '0').trim(),
+      Nominated: String(r['Nominted'] || r['Nominated'] || '0').trim(),
+      Vessel:    String(r['Vessel']   || '').trim(),
+    }));
+  return shippersCache;
+}
+
+/* Top-level render for the Shippers sub-tab */
+async function renderShippersView() {
+  const wrap = document.getElementById('tanks-container');
+  wrap.innerHTML = '<div class="loading-msg">Loading shipper data…</div>';
+  try {
+    const rows = await fetchShippers();
+    // Group by Product (preserve insertion order)
+    const groups = {};
+    rows.forEach(r => {
+      if (!groups[r.Product]) groups[r.Product] = [];
+      groups[r.Product].push(r);
+    });
+
+    wrap.innerHTML = '';
+    if (currentView === 'list') {
+      const tw = document.createElement('div');
+      tw.className = 'table-wrap';
+      tw.appendChild(buildShippersList(groups));
+      wrap.appendChild(tw);
+    } else {
+      const grid = document.createElement('div');
+      grid.className = 'tank-grid';
+      Object.entries(groups).forEach(([product, pRows]) =>
+        grid.appendChild(buildShippersCard(product, pRows))
+      );
+      wrap.appendChild(grid);
+    }
+  } catch(e) {
+    wrap.innerHTML = `<div class="error-msg"><strong>Could not load shipper data.</strong><br>${esc(e.message)}</div>`;
+  }
+}
+
+/* Helper: parse a kg string that may have commas */
+function parseShipperKg(s) {
+  return parseFloat(String(s || '0').replace(/,/g, '').trim()) || 0;
+}
+
+/* Helper: status colour based on stock vs nominated */
+function shipperRowStatus(stock, nominated) {
+  if (nominated <= 0) return 'unknown';
+  const pct = stock / nominated * 100;
+  if (pct >= 95) return 'optimal';
+  if (pct > 0)   return 'loading';
+  return 'warning';
+}
+
+/* Build the list/table view for the Shippers sub-tab */
+function buildShippersList(groups) {
+  const table = document.createElement('table');
+  table.className = 'tank-table';
+  table.innerHTML = `<thead><tr>
+    <th>Product / Shipper</th>
+    <th class="col-num">Stock (kg)</th>
+    <th class="col-num">Nominated (kg)</th>
+    <th>Vessel</th>
+    <th class="col-pct">% Nominated</th>
+  </tr></thead><tbody></tbody>`;
+  const tbody = table.querySelector('tbody');
+
+  Object.entries(groups).forEach(([product, rows]) => {
+    const totalStock     = rows.reduce((s, r) => s + parseShipperKg(r.Stock),     0);
+    const totalNominated = rows.reduce((s, r) => s + parseShipperKg(r.Nominated), 0);
+    const pct      = totalNominated > 0 ? Math.min(200, totalStock / totalNominated * 100) : null;
+    const pctDisp  = pct !== null ? pct.toFixed(1) + '%' : '—';
+    const barWidth = pct !== null ? Math.min(100, pct).toFixed(1) : 0;
+    const status   = pct === null ? 'unknown' : pct >= 95 ? 'optimal' : pct > 0 ? 'loading' : 'warning';
+
+    // Product summary row
+    const summaryTr = document.createElement('tr');
+    summaryTr.className = 'shared-summary-row';
+    summaryTr.innerHTML = `
+      <td class="col-tank">${esc(product)}<span class="mobile-stock"> ${totalStock.toLocaleString()} kg</span></td>
+      <td class="col-num">${totalStock.toLocaleString()} kg</td>
+      <td class="col-num">${totalNominated > 0 ? totalNominated.toLocaleString() + ' kg' : '—'}</td>
+      <td style="color:var(--muted)">—</td>
+      <td class="col-pct">
+        <div class="pct-cell">
+          <div class="pct-track"><div class="pct-fill ${status}" style="width:${barWidth}%"></div></div>
+          <span class="pct-label ${status}">${pctDisp}</span>
+        </div>
+      </td>`;
+    tbody.appendChild(summaryTr);
+
+    // Shipper rows
+    rows.forEach(r => {
+      const stock     = parseShipperKg(r.Stock);
+      const nominated = parseShipperKg(r.Nominated);
+      const sPct      = nominated > 0 ? Math.min(200, stock / nominated * 100) : null;
+      const sPctDisp  = sPct !== null ? sPct.toFixed(1) + '%' : '—';
+      const sBarWidth = sPct !== null ? Math.min(100, sPct).toFixed(1) : 0;
+      const sStatus   = shipperRowStatus(stock, nominated);
+      // Row colour: green = ok, yellow = under-nominated, red = over-nominated
+      let rowClass = '';
+      if (nominated > 0) {
+        const diff = stock - nominated;
+        if      (diff < -50000)          rowClass = 'ship-row-under';
+        else if (Math.abs(diff) <= 5000) rowClass = 'ship-row-ok';
+        else if (diff > 50000)           rowClass = 'ship-row-over';
+      }
+      const tr = document.createElement('tr');
+      tr.className = rowClass;
+      tr.innerHTML = `
+        <td class="col-tank shipper-indent">↳ ${esc(r.Shipper)}<span class="mobile-stock"> ${stock.toLocaleString()} kg</span></td>
+        <td class="col-num">${stock.toLocaleString()} kg</td>
+        <td class="col-num">${nominated > 0 ? nominated.toLocaleString() + ' kg' : '—'}</td>
+        <td class="col-product">${esc(r.Vessel || '—')}</td>
+        <td class="col-pct">
+          <div class="pct-cell">
+            <div class="pct-track"><div class="pct-fill ${sStatus}" style="width:${sBarWidth}%"></div></div>
+            <span class="pct-label ${sStatus}">${sPctDisp}</span>
+          </div>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+  });
+  return table;
+}
+
+/* Build a card for one product group in the Shippers sub-tab */
+function buildShippersCard(product, rows) {
+  const totalStock     = rows.reduce((s, r) => s + parseShipperKg(r.Stock),     0);
+  const totalNominated = rows.reduce((s, r) => s + parseShipperKg(r.Nominated), 0);
+  const pct      = totalNominated > 0 ? Math.min(100, totalStock / totalNominated * 100) : null;
+  const pctDisp  = pct !== null ? pct.toFixed(1) + '%' : '—';
+  const barWidth = pct !== null ? pct.toFixed(1) : 0;
+  const status   = pct === null ? 'unknown' : pct >= 95 ? 'optimal' : pct > 0 ? 'loading' : 'warning';
+
+  const shipperRows = rows.map(r => {
+    const stock     = parseShipperKg(r.Stock);
+    const nominated = parseShipperKg(r.Nominated);
+    const diff      = stock - nominated;
+    let rowClass = '';
+    if (nominated > 0) {
+      if      (diff < -50000)          rowClass = 'ship-row-under';
+      else if (Math.abs(diff) <= 5000) rowClass = 'ship-row-ok';
+      else if (diff > 50000)           rowClass = 'ship-row-over';
+    }
+    return `<tr class="${rowClass}">
+      <td>${esc(r.Shipper)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${stock.toLocaleString()} kg</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${nominated > 0 ? nominated.toLocaleString() + ' kg' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // Unique vessels for this product
+  const vessels = [...new Set(rows.map(r => r.Vessel).filter(v => v && v !== '??'))].join(', ');
+
+  const card = document.createElement('div');
+  card.className = `tank-card shared-card${status === 'optimal' ? ' optimal' : status === 'warning' ? ' warning' : ''}`;
+  card.innerHTML = `
+    <div class="shared-header">
+      <div>
+        <div class="tank-name">${esc(product)}</div>
+        <span class="product-badge">${rows.length} shipper${rows.length !== 1 ? 's' : ''}</span>
+      </div>
+      ${vessels ? `<div class="vessel-badge">⛴ ${esc(vessels)}</div>` : ''}
+    </div>
+    <div class="fill-bar-bg"><div class="fill-bar" style="width:${barWidth}%"></div></div>
+    <div class="shared-fill-row">
+      <span class="fill-pct">${pctDisp}</span>
+      <span class="fill-vols">${totalStock.toLocaleString()} kg / ${totalNominated > 0 ? totalNominated.toLocaleString() + ' kg nom.' : '—'}</span>
+    </div>
+    <table class="shipper-table">
+      <thead><tr><th>Shipper</th><th style="text-align:right">Stock</th><th style="text-align:right">Nominated</th></tr></thead>
+      <tbody>${shipperRows}</tbody>
+    </table>`;
+  return card;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
    SORT CONTROLS
    ══════════════════════════════════════════════════════════════ */
 function setSort(key) {
@@ -1751,6 +2010,7 @@ function manualRefresh() {
   // Also clear history feed cache so fresh data is fetched
   historyFeedCache = {};
   historyCache     = {};
+  shippersCache    = null;
   doRefresh();
 }
 
