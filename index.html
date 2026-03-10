@@ -180,6 +180,8 @@
     @media (max-width: 500px) { .shared-card { grid-column: span 1; } }
     .shared-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .5rem; }
     .vessel-badge { font-size: .75rem; color: var(--muted); background: #f1f5f9; padding: .2rem .6rem; border-radius: 5px; font-weight: 500; white-space: nowrap; }
+    .heat-badge { font-size: .85rem; margin-left: .25rem; vertical-align: middle; }
+
     .shared-fill-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: .2rem; margin-bottom: .875rem; }
     .shipper-table { width: 100%; border-collapse: collapse; font-size: .8125rem; margin-top: .25rem; }
     .shipper-table th { text-align: left; padding: .3rem .5rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--border); }
@@ -390,6 +392,9 @@ const CONFIG = {
       historyUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTIu2Ftq3WV5oNIJjgCti8sQHjeKb9huwz3icRuf-ARnkiuLm17h40sRgDqDgbY7wIVo1Y62xKtcBFF/pub?gid=0&single=true&output=csv"
     }
   ],
+
+  /* ── Carboclor tank heating info (static — update manually) ─ */
+  heatedTanks: new Set(['21336', '21338', '21341', '21352', '21359']),
 
   /* ── Carboclor shipper breakdown feed ────────────────────── */
   /* Columns: Product, Shipper, Stock, Nominted (=Nominated), Vessel */
@@ -1023,7 +1028,9 @@ async function showTankDetail(tankId) {
   window.scrollTo(0, 0);
 
   // Set title
-  document.getElementById('detail-tank-title').textContent = `Tank ${tankId}`;
+  const heatHtml = CONFIG.heatedTanks?.has(String(tankId))
+    ? ` <span class="heat-badge" title="Heated tank">🔥</span>` : '';
+  document.getElementById('detail-tank-title').innerHTML = `Tank ${esc(String(tankId))}${heatHtml}`;
   const carbFac = allFacilityData.find(f => f.showHistory);
   if (carbFac) {
     const row = carbFac?.tanks.find(r => colVal(r,'name') === String(tankId));
@@ -1256,6 +1263,83 @@ function renderChartSection(fac) {
     </div>`;
   document.getElementById('tanks-container').appendChild(section);
   renderChart(fac);
+
+  // ── Recent Activity table (last 30 days of raw transactions) ──
+  const actSection = document.createElement('div');
+  actSection.className = 'chart-section activity-section';
+  actSection.id = 'tpr-activity-section';
+  actSection.innerHTML = `
+    <div class="chart-header">
+      <span class="chart-title">Recent Activity — Last 30 Days</span>
+      <span id="tpr-activity-count" style="font-size:.8rem;color:var(--muted)"></span>
+    </div>
+    <div class="table-wrap" style="overflow-x:auto">
+      <table class="tank-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Supplier</th>
+            <th>Product</th>
+            <th class="col-num">Qty (kg)</th>
+            <th class="col-num">Tank Stock (kg)</th>
+          </tr>
+        </thead>
+        <tbody id="tpr-activity-tbody">
+          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>`;
+  document.getElementById('tanks-container').appendChild(actSection);
+  renderTPRActivity(fac.historyUrl);
+}
+
+async function renderTPRActivity(url) {
+  const tbody = document.getElementById('tpr-activity-tbody');
+  const countEl = document.getElementById('tpr-activity-count');
+  if (!tbody) return;
+  try {
+    const rows = await fetchHistory(url);
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const recent = rows
+      .filter(r => {
+        try { return parseDateFull(r[1]) >= cutoff; } catch { return false; }
+      })
+      .slice()
+      .reverse();
+    if (countEl) countEl.textContent = `${recent.length} transaction${recent.length !== 1 ? 's' : ''}`;
+    if (!recent.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">No activity in the last 30 days</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = recent.map(r => {
+      const dateStr  = r[1]?.trim() || '—';
+      const type     = String(r[2] || '').trim();
+      const supplier = String(r[3] || '').trim();
+      const product  = String(r[4] || '').trim();
+      const qtyMT    = parseFloat(r[5]);
+      const stockMT  = parseFloat(r[8]);
+      const qtyKg    = isNaN(qtyMT)   ? null : Math.round(qtyMT  * 1000);
+      const stockKg  = isNaN(stockMT) ? null : Math.round(stockMT * 1000);
+      const isIn     = /in/i.test(type);
+      const typeIcon = isIn ? '▲ In' : '▼ Out';
+      const typeColor = isIn ? 'color:var(--ok)' : 'color:var(--warn)';
+      const qtySign  = isIn ? '+' : '−';
+      const qtyDisp  = qtyKg !== null ? `${qtySign}${Math.abs(qtyKg).toLocaleString()} kg` : '—';
+      const stockDisp = stockKg !== null ? stockKg.toLocaleString() + ' kg' : '—';
+      return `<tr>
+        <td style="white-space:nowrap">${esc(dateStr)}</td>
+        <td style="${typeColor};font-weight:600;white-space:nowrap">${typeIcon}</td>
+        <td>${esc(supplier)}</td>
+        <td>${esc(product)}</td>
+        <td class="col-num" style="font-variant-numeric:tabular-nums">${qtyDisp}</td>
+        <td class="col-num" style="font-variant-numeric:tabular-nums">${stockDisp}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">Failed to load activity</td></tr>`;
+  }
 }
 
 function setPeriod(p) {
@@ -1539,10 +1623,12 @@ function renderTankGrid() {
    CARD & LIST BUILDERS — regular facility (Carboclor)
    ══════════════════════════════════════════════════════════════ */
 function tankNameHtml(name, fac) {
+  const heatBadge = CONFIG.heatedTanks?.has(String(name))
+    ? `<span class="heat-badge" title="Heated tank">🔥</span>` : '';
   if (fac?.showHistory) {
-    return `<a href="#tank/${esc(name)}" class="tank-link">${esc(name)}</a>`;
+    return `<a href="#tank/${esc(name)}" class="tank-link">${esc(name)}</a>${heatBadge}`;
   }
-  return esc(name);
+  return esc(name) + heatBadge;
 }
 
 function buildCard(row, fac) {
