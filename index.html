@@ -386,9 +386,12 @@ const CONFIG = {
       csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=1349722585&single=true&output=csv",
       showHistory: true,
       historyFeeds: [
-        { label: "TK 21-22", csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=36360875&single=true&output=csv" },
-        { label: "TK 7",     csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=0&single=true&output=csv" },
-        { label: "TK 27",    csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=1489652999&single=true&output=csv" }
+        { label: "TK 21-22", csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=36360875&single=true&output=csv",
+          colMap: { date: 1, tank: 2, inOut: 3, supplier: 4, material: 5, kgs: 6 } },
+        { label: "TK 7",     csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=0&single=true&output=csv",
+          colMap: { date: 1, tank: 2, inOut: 3, supplier: 4, material: 5, kgs: 6 } },
+        { label: "TK 27",    csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=1489652999&single=true&output=csv",
+          colMap: { date: 1, tank: 2, inOut: 3, supplier: 4, material: 5, kgs: 6 } }
       ],
       shippersUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=0&single=true&output=csv",
       shippersColumns: { stock: "Actual", nominated: "Nominated qty  (kg)", vessel: "ETF" },
@@ -715,15 +718,41 @@ function assignYears(rows, dateColIdx) {
 /* ══════════════════════════════════════════════════════════════
    HISTORY FEED FETCHING (Carboclor UCO / VAO)
    ══════════════════════════════════════════════════════════════ */
-async function fetchHistoryFeed(url) {
+async function fetchHistoryFeed(feed) {
+  // Accept either a plain URL string (legacy) or a full feed object with optional colMap
+  const url = typeof feed === 'string' ? feed : feed.csvUrl;
+  const cm  = (typeof feed === 'object' && feed.colMap) ? feed.colMap : null;
+
   if (historyFeedCache[url]) return historyFeedCache[url];
   const resp = await fetch(url, { cache: 'no-cache' });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const text = await resp.text();
   const { data } = Papa.parse(text, { header: false, skipEmptyLines: true });
-  // Skip header row (row 0); keep rows with at least 5 columns
-  const dataRows = data.filter((r, i) => i > 0 && r.length >= 5);
-  const annotated = assignYears(dataRows, 0);  // col 0 = Date
+
+  let annotated;
+  if (cm) {
+    // Custom column layout — detect real data rows by D/M pattern in the date column
+    const dataRows = data
+      .filter(r => /^\d{1,2}\/\d{1,2}$/.test(String(r[cm.date] || '').trim()))
+      .map(r => {
+        const rawKgs = parseKg(r[cm.kgs]);
+        const inOut  = String(r[cm.inOut] || '').trim().toLowerCase();
+        const kgs    = inOut.startsWith('out') ? -Math.abs(rawKgs) : rawKgs;
+        return [
+          String(r[cm.date]     || '').trim(),  // → col 0: Date
+          String(r[cm.tank]     || '').trim(),  // → col 1: Tank
+          String(r[cm.supplier] || '').trim(),  // → col 2: Supplier
+          String(r[cm.material] || '').trim(),  // → col 3: Material
+          String(kgs),                           // → col 4: Kgs (signed)
+        ];
+      });
+    annotated = assignYears(dataRows, 0);
+  } else {
+    // Standard Carboclor format: col 0 = Date, col 1 = Tank, col 4 = Kgs
+    const dataRows = data.filter((r, i) => i > 0 && r.length >= 5);
+    annotated = assignYears(dataRows, 0);
+  }
+
   historyFeedCache[url] = annotated;
   return annotated;
 }
@@ -737,7 +766,7 @@ async function getAllTankHistory(tankId) {
   for (const feed of feeds) {
     if (isPlaceholder(feed.csvUrl)) continue;
     try {
-      const annotated = await fetchHistoryFeed(feed.csvUrl);
+      const annotated = await fetchHistoryFeed(feed);  // pass full feed so colMap is available
       // col 1 = Tank ID
       const tankItems = annotated.filter(
         item => String(item.row[1]).trim() === String(tankId).trim()
