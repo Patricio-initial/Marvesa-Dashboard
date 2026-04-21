@@ -385,7 +385,11 @@ const CONFIG = {
       name: "Voxen",
       csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=1349722585&single=true&output=csv",
       showHistory: true,
-      historyFeeds: [],   // TODO: add history CSV URLs when available
+      historyFeeds: [
+        { label: "TK 21-22", csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=36360875&single=true&output=csv" },
+        { label: "TK 7",     csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=0&single=true&output=csv" },
+        { label: "TK 27",    csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQzONJvNhxQkOVfWaQF1YuQbjDYTVj2NkxhMIKm2bLSYUqWOITk4T6y1pXHLEBNr6qUXdTfbQzo886d/pub?gid=1489652999&single=true&output=csv" }
+      ]
       shippersUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=0&single=true&output=csv",
       shippersColumns: { stock: "Actual", nominated: "Nominated qty  (kg)", vessel: "ETF" },
       columns: {
@@ -2267,3 +2271,4 @@ document.addEventListener('DOMContentLoaded', init);
 
 </body>
 </html>
+
