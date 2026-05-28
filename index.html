@@ -289,6 +289,55 @@
     .kgs-neg { color: var(--red);   font-weight: 600; }
     .activity-section { margin-top: 1.25rem; }
 
+    /* ─── Nominations view ───────────────────────────────────── */
+    .nom-detail.hidden { display: none; }
+    .nom-supplier {
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); overflow: hidden; margin-bottom: .875rem;
+    }
+    .nom-supplier-header {
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+      cursor: pointer; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+      transition: background .12s;
+    }
+    .nom-supplier-header:hover { background: rgba(128,128,128,.04); }
+    .nom-title  { flex: 0 0 auto; min-width: 150px; }
+    .nom-name   { font-weight: 800; font-size: 1rem; color: var(--text); }
+    .nom-facs   { font-size: .72rem; color: var(--muted); margin-top: .15rem; }
+    .nom-bar-wrap { display: flex; align-items: center; gap: .75rem; flex: 1; min-width: 160px; }
+    .nom-bar-track { flex: 1; height: 8px; background: var(--border); border-radius: 999px; overflow: hidden; }
+    .nom-bar-fill  { height: 100%; border-radius: 999px; transition: width .4s ease; }
+    .nom-pct    { font-weight: 800; font-size: 1rem; min-width: 3.5rem; text-align: right; }
+    .nom-totals { font-size: .8rem; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+    .nom-totals strong { color: var(--text); font-weight: 600; }
+    .nom-chevron { color: var(--muted); font-size: .8rem; flex-shrink: 0; transition: transform .2s; }
+    .nom-supplier-header.open .nom-chevron { transform: rotate(180deg); }
+
+    .nom-fac-row {
+      padding: .6rem 1.25rem .6rem 1.75rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+    }
+    .nom-fac-row:last-child { border-bottom: none; }
+    .nom-fac-title { flex: 0 0 auto; min-width: 130px; }
+    .nom-fac-name  { font-weight: 600; font-size: .875rem; color: var(--text); }
+    .nom-fac-prod  { font-size: .7rem; color: var(--muted); }
+    .nom-fac-bar-wrap { display: flex; align-items: center; gap: .625rem; flex: 1; min-width: 120px; }
+    .nom-fac-bar-track { flex: 1; height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; }
+    .nom-fac-bar-fill  { height: 100%; border-radius: 999px; transition: width .4s ease; }
+    .nom-fac-pct  { font-weight: 700; font-size: .85rem; min-width: 2.75rem; text-align: right; }
+    .nom-fac-vals { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+    .nom-fac-vals strong { color: var(--text); font-weight: 500; }
+
+    .nom-tank-row {
+      padding: .375rem 1.25rem .375rem 2.75rem;
+      background: rgba(128,128,128,.025);
+      display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+      font-size: .8rem; color: var(--muted);
+    }
+    html.dark .nom-tank-row { background: rgba(255,255,255,.02); }
+    .nom-tank-id { font-weight: 600; color: var(--text); min-width: 80px; }
+
     /* ─── Carboclor sub-tabs (Tanks / Shippers) ─────────────── */
     .subtabs-row { margin-bottom: .875rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
     .subtab {
@@ -598,6 +647,15 @@ const CONFIG = {
 
   </div><!-- /#tank-detail -->
 
+  <!-- ══ Nominations view (hidden by default) ═══════════════ -->
+  <div id="nominations-view" style="display:none">
+    <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+      <h2 style="font-size:1.1rem;font-weight:800;color:var(--text)">📋 Nominaciones</h2>
+      <span style="font-size:.8rem;color:var(--muted)">Todas las terminales · agrupado por proveedor</span>
+    </div>
+    <div id="nominations-container"><div class="loading-msg">Cargando…</div></div>
+  </div><!-- /#nominations-view -->
+
 </main>
 
 
@@ -621,6 +679,9 @@ let historyCache   = {};   // url → rows (for TPR)
 /* ── Carboclor sub-tab state ───────────────────────────────── */
 let carboclorSubTab = 'tanks';  // 'tanks' | 'shippers'
 let shippersCache   = {};       // url → normalised shipper rows (invalidated on refresh)
+
+/* ── Nominations state ─────────────────────────────────────── */
+let showNominations = false;
 
 /* ── Tank detail state ─────────────────────────────────────── */
 let historyFeedCache        = {};   // url → [{row, year, date}]
@@ -1177,13 +1238,202 @@ function showMainView() {
   currentTankId    = null;
   currentTankStock = 0;
   tankTimeline     = [];
+  showNominations  = false;
 
-  document.getElementById('tank-detail').style.display  = 'none';
-  document.getElementById('main-content').style.display = 'block';
+  document.getElementById('tank-detail').style.display       = 'none';
+  document.getElementById('nominations-view').style.display  = 'none';
+  document.getElementById('main-content').style.display      = 'block';
 }
 
 function goBack() {
   window.location.hash = '';
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   NOMINATIONS VIEW
+   ══════════════════════════════════════════════════════════════ */
+
+/* Load all shipper rows across every facility */
+async function loadNominationRows() {
+  const rows = [];
+
+  for (const facData of allFacilityData) {
+    if (facData.error) continue;
+
+    /* ── TPR (shared): per-tank per-shipper rows are already in facData.tanks ── */
+    if (facData.type === 'shared') {
+      const fc = facData.columns || CONFIG.columns;
+      facData.tanks.forEach(row => {
+        const shipper   = colVal(row, 'shipper',   fc).trim();
+        const tank      = colVal(row, 'name',      fc).trim();
+        const product   = colVal(row, 'product',   fc).trim();
+        const stock     = parseKg(colVal(row, 'volume',    fc));
+        const nominated = parseKg(colVal(row, 'nominated', fc));
+        if (!shipper || /^total$/i.test(shipper)) return;
+        rows.push({ facility: facData.name, shipper, product, stock, nominated, tank });
+      });
+      continue;
+    }
+
+    /* ── Carboclor / Voxen: fetch shippersUrl ── */
+    if (!facData.shippersUrl || isPlaceholder(facData.shippersUrl)) continue;
+    try {
+      const shRows = await fetchCSV(facData.shippersUrl);
+      const sc     = facData.shippersColumns || {};
+      shRows.forEach(row => {
+        const shipper   = (row['Shipper'] || '').trim();
+        const product   = (row['Product'] || '').trim();
+        const stock     = parseKg(row[sc.stock]     || '0');
+        const nominated = parseKg(row[sc.nominated] || '0');
+        if (!shipper || /^total$/i.test(shipper)) return;
+        rows.push({ facility: facData.name, shipper, product, stock, nominated, tank: null });
+      });
+    } catch(e) {
+      console.warn(`Nominations: ${facData.name} shippers failed:`, e.message);
+    }
+  }
+  return rows;
+}
+
+/* Helpers */
+function nomPctColor(pct) {
+  if (pct > 100) return '#ea580c';
+  if (pct >= 90)  return 'var(--green)';
+  if (pct >= 50)  return 'var(--yellow)';
+  return 'var(--red)';
+}
+
+function nomBar(pct, height = '8px') {
+  const w   = Math.min(pct, 100).toFixed(1);
+  const col = nomPctColor(pct);
+  return `<div class="nom-bar-track" style="height:${height}">
+    <div class="nom-bar-fill" style="width:${w}%;background:${col}"></div>
+  </div>`;
+}
+
+function nomFmt(n) {
+  if (!n) return '—';
+  return n >= 1000 ? (n / 1000).toFixed(1) + ' MT' : n.toLocaleString() + ' kg';
+}
+
+/* Main render */
+async function renderNominationsView() {
+  const container = document.getElementById('nominations-container');
+  container.innerHTML = '<div class="loading-msg">Cargando nominaciones…</div>';
+
+  try {
+    const rows = await loadNominationRows();
+
+    if (!rows.length) {
+      container.innerHTML = '<div class="loading-msg">No hay datos de nominaciones disponibles.</div>';
+      return;
+    }
+
+    /* Group: SHIPPER_KEY → { name, byFac: { facName → { nom, stk, rows[] } } } */
+    const tree = {};
+    rows.forEach(r => {
+      const key = r.shipper.toUpperCase();
+      if (!tree[key]) tree[key] = { name: r.shipper, byFac: {} };
+      if (!tree[key].byFac[r.facility])
+        tree[key].byFac[r.facility] = { nom: 0, stk: 0, rows: [] };
+      tree[key].byFac[r.facility].nom += r.nominated;
+      tree[key].byFac[r.facility].stk += r.stock;
+      tree[key].byFac[r.facility].rows.push(r);
+    });
+
+    /* Sort suppliers: non-zero nominated desc, then zero-nom alphabetically */
+    const suppliers = Object.values(tree).sort((a, b) => {
+      const nA = Object.values(a.byFac).reduce((s, f) => s + f.nom, 0);
+      const nB = Object.values(b.byFac).reduce((s, f) => s + f.nom, 0);
+      if (nB !== nA) return nB - nA;
+      return a.name.localeCompare(b.name);
+    });
+
+    let html = '';
+
+    for (const sup of suppliers) {
+      const totalNom = Object.values(sup.byFac).reduce((s, f) => s + f.nom, 0);
+      const totalStk = Object.values(sup.byFac).reduce((s, f) => s + f.stk, 0);
+      const pct      = totalNom > 0 ? totalStk / totalNom * 100 : 0;
+      const pctLabel = totalNom > 0 ? pct.toFixed(1) + '%' : '—';
+      const color    = nomPctColor(pct);
+      const facNames = Object.keys(sup.byFac).join(' · ');
+      const supId    = 'nom-' + sup.name.replace(/\W/g, '_');
+
+      html += `
+      <div class="nom-supplier">
+        <div class="nom-supplier-header open" id="${supId}-hdr"
+             onclick="nomToggle('${supId}')">
+          <div class="nom-title">
+            <div class="nom-name">${esc(sup.name)}</div>
+            <div class="nom-facs">${esc(facNames)}</div>
+          </div>
+          <div class="nom-bar-wrap">
+            ${nomBar(pct)}
+            <span class="nom-pct" style="color:${color}">${pctLabel}</span>
+          </div>
+          <div class="nom-totals">
+            <strong>${nomFmt(totalStk)}</strong> de ${nomFmt(totalNom)} nominado
+          </div>
+          <span class="nom-chevron">▲</span>
+        </div>
+
+        <div class="nom-detail" id="${supId}-detail">`;
+
+      for (const [facName, fd] of Object.entries(sup.byFac)) {
+        const fPct   = fd.nom > 0 ? fd.stk / fd.nom * 100 : 0;
+        const fLabel = fd.nom > 0 ? fPct.toFixed(1) + '%' : '—';
+        const fColor = nomPctColor(fPct);
+        const prods  = [...new Set(fd.rows.map(r => r.product).filter(Boolean))].join(', ');
+
+        html += `
+          <div class="nom-fac-row">
+            <div class="nom-fac-title">
+              <div class="nom-fac-name">${esc(facName)}</div>
+              ${prods ? `<div class="nom-fac-prod">${esc(prods)}</div>` : ''}
+            </div>
+            <div class="nom-fac-bar-wrap">
+              <div class="nom-fac-bar-track">
+                <div class="nom-fac-bar-fill" style="width:${Math.min(fPct,100).toFixed(1)}%;background:${fColor}"></div>
+              </div>
+              <span class="nom-fac-pct" style="color:${fColor}">${fLabel}</span>
+            </div>
+            <div class="nom-fac-vals">
+              <strong>${nomFmt(fd.stk)}</strong> de ${nomFmt(fd.nom)}
+            </div>
+          </div>`;
+
+        /* Tank-level rows (TPR has tank, Carboclor/Voxen usually don't) */
+        fd.rows.filter(r => r.tank).forEach(r => {
+          const tPct   = r.nominated > 0 ? r.stock / r.nominated * 100 : null;
+          const tColor = tPct !== null ? nomPctColor(tPct) : 'var(--muted)';
+          html += `
+          <div class="nom-tank-row">
+            <span class="nom-tank-id">TK ${esc(r.tank)}</span>
+            <span style="color:var(--text)">${nomFmt(r.stock)} disponible</span>
+            ${r.product ? `<span>${esc(r.product)}</span>` : ''}
+            ${r.nominated > 0 ? `<span style="color:${tColor};font-weight:600">${tPct.toFixed(0)}% completado</span>` : ''}
+          </div>`;
+        });
+      }
+
+      html += `</div></div>`;
+    }
+
+    container.innerHTML = html;
+
+  } catch(e) {
+    container.innerHTML = `<div class="error-msg">Error cargando nominaciones: ${esc(e.message)}</div>`;
+  }
+}
+
+function nomToggle(id) {
+  const detail = document.getElementById(id + '-detail');
+  const hdr    = document.getElementById(id + '-hdr');
+  if (!detail) return;
+  detail.classList.toggle('hidden');
+  hdr.classList.toggle('open');
 }
 
 
@@ -1643,25 +1893,41 @@ function renderTabs() {
   wrap.innerHTML = '';
   allFacilityData.forEach((f, i) => {
     const btn = document.createElement('button');
-    btn.className = 'tab' + (i === activeFacility ? ' active' : '');
+    btn.className = 'tab' + (!showNominations && i === activeFacility ? ' active' : '');
     const warnCount = getFacilityTankStatuses(f).filter(s => s==='warning').length;
     const histBadge = f.showHistory ? `<span class="history-hint">history</span>` : '';
     btn.innerHTML = esc(f.name) + (warnCount ? ` (${warnCount} ⚠)` : '') + histBadge;
     btn.onclick = () => {
       activeFacility  = i;
-      carboclorSubTab = 'tanks';  // reset sub-tab when switching facility
+      carboclorSubTab = 'tanks';
+      showNominations = false;
+      document.getElementById('nominations-view').style.display = 'none';
+      document.getElementById('main-content').style.display     = 'block';
       renderTabs();
       renderTankGrid();
     };
     wrap.appendChild(btn);
   });
 
-  // Show sub-tabs for any facility that has a shippers URL
+  // Nominations tab
+  const nomBtn = document.createElement('button');
+  nomBtn.className = 'tab' + (showNominations ? ' active' : '');
+  nomBtn.innerHTML = '📋 Nominaciones';
+  nomBtn.onclick = () => {
+    showNominations = true;
+    document.getElementById('main-content').style.display     = 'none';
+    document.getElementById('tank-detail').style.display      = 'none';
+    document.getElementById('nominations-view').style.display = 'block';
+    renderTabs();
+    renderNominationsView();
+  };
+  wrap.appendChild(nomBtn);
+
+  // Show sub-tabs only when on a facility view (not nominations)
   const fac = allFacilityData[activeFacility];
-  const showSub = !!(fac?.shippersUrl);
+  const showSub = !showNominations && !!(fac?.shippersUrl);
   document.getElementById('subtabs-row').style.display = showSub ? '' : 'none';
-  document.getElementById('sort-row').style.display    = (!showSub || carboclorSubTab === 'tanks') ? '' : 'none';
-  // Sync sub-tab button states
+  document.getElementById('sort-row').style.display    = (!showNominations && (!showSub || carboclorSubTab === 'tanks')) ? '' : 'none';
   document.getElementById('subtab-tanks')?.classList.toggle('active',    carboclorSubTab === 'tanks');
   document.getElementById('subtab-shippers')?.classList.toggle('active', carboclorSubTab === 'shippers');
 }
@@ -2295,6 +2561,7 @@ document.addEventListener('DOMContentLoaded', init);
 
 </body>
 </html>
+
 
 
 
