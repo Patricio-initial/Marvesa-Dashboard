@@ -443,7 +443,7 @@ const CONFIG = {
           colMap: { date: 1, tank: 2, inOut: 3, supplier: 4, material: 5, kgs: 6 } }
       ],
       shippersUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=0&single=true&output=csv",
-      shippersColumns: { stock: "Actual", nominated: "Nominated qty  (kg)", vessel: "ETF" },
+      shippersColumns: { stock: "Actual", nominated: "Nominated qty  (kg)", vessel: "ETF", tank: "Tanks" },
       columns: {
         name:     "Tank",
         product:  "Product/Supplier",
@@ -1287,8 +1287,9 @@ async function loadNominationRows() {
         const product   = (row['Product'] || '').trim();
         const stock     = parseKg(row[sc.stock]     || '0');
         const nominated = parseKg(row[sc.nominated] || '0');
+        const tank      = (row[sc.tank] || row['Tanks'] || row['Tank'] || '').trim() || null;
         if (!shipper || /^total$/i.test(shipper)) return;
-        rows.push({ facility: facData.name, shipper, product, stock, nominated, tank: null });
+        rows.push({ facility: facData.name, shipper, product, stock, nominated, tank });
       });
     } catch(e) {
       console.warn(`Nominations: ${facData.name} shippers failed:`, e.message);
