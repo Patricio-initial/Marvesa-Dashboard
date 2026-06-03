@@ -650,6 +650,7 @@ const CONFIG = {
   <!-- ══ Nominations view (hidden by default) ═══════════════ -->
   <div id="nominations-view" style="display:none">
     <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+      <button id="nom-back-btn" onclick="nomGoBack()" style="display:flex;align-items:center;gap:.35rem;padding:.35rem .75rem;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font-size:.85rem;cursor:pointer;font-weight:600">← Volver</button>
       <h2 style="font-size:1.1rem;font-weight:800;color:var(--text)">📋 Nominaciones</h2>
       <span style="font-size:.8rem;color:var(--muted)">Todas las terminales · agrupado por proveedor</span>
     </div>
@@ -1317,6 +1318,14 @@ function nomFmt(n) {
   return n >= 1000 ? (n / 1000).toFixed(1) + ' MT' : n.toLocaleString() + ' kg';
 }
 
+function nomGoBack() {
+  showNominations = false;
+  document.getElementById('nominations-view').style.display = 'none';
+  document.getElementById('main-content').style.display     = 'block';
+  renderTabs();
+  renderTankGrid();
+}
+
 /* Main render */
 async function renderNominationsView() {
   const container = document.getElementById('nominations-container');
@@ -1386,6 +1395,8 @@ async function renderNominationsView() {
         const fLabel = fd.nom > 0 ? fPct.toFixed(1) + '%' : '—';
         const fColor = nomPctColor(fPct);
         const prods  = [...new Set(fd.rows.map(r => r.product).filter(Boolean))].join(', ');
+        const tankRows = fd.rows.filter(r => r.tank);
+        const hasMultiTank = tankRows.length > 1;
 
         html += `
           <div class="nom-fac-row">
@@ -1404,16 +1415,23 @@ async function renderNominationsView() {
             </div>
           </div>`;
 
-        /* Tank-level rows (TPR has tank, Carboclor/Voxen usually don't) */
-        fd.rows.filter(r => r.tank).forEach(r => {
+        /* Show individual tanks when terminal has >1 tank, or always when tank data is available */
+        tankRows.forEach(r => {
           const tPct   = r.nominated > 0 ? r.stock / r.nominated * 100 : null;
           const tColor = tPct !== null ? nomPctColor(tPct) : 'var(--muted)';
+          const tLabel = tPct !== null ? tPct.toFixed(1) + '%' : '—';
+          const tBarW  = tPct !== null ? Math.min(tPct, 100).toFixed(1) : 0;
           html += `
-          <div class="nom-tank-row">
-            <span class="nom-tank-id">TK ${esc(r.tank)}</span>
-            <span style="color:var(--text)">${nomFmt(r.stock)} disponible</span>
-            ${r.product ? `<span>${esc(r.product)}</span>` : ''}
-            ${r.nominated > 0 ? `<span style="color:${tColor};font-weight:600">${tPct.toFixed(0)}% completado</span>` : ''}
+          <div class="nom-tank-row" style="display:flex;align-items:center;gap:.75rem;padding:.45rem .75rem .45rem 2rem;border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <span class="nom-tank-id" style="min-width:4rem">TK ${esc(r.tank)}</span>
+            <div style="flex:1;min-width:120px">
+              <div style="height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${tBarW}%;background:${tColor};border-radius:3px"></div>
+              </div>
+            </div>
+            <span style="color:${tColor};font-weight:600;min-width:3.5rem;text-align:right">${tLabel}</span>
+            <span style="color:var(--text);min-width:7rem;text-align:right">${nomFmt(r.stock)} / ${r.nominated > 0 ? nomFmt(r.nominated) : '—'}</span>
+            ${r.product ? `<span style="color:var(--muted);font-size:.78rem">${esc(r.product)}</span>` : ''}
           </div>`;
         });
       }
@@ -2150,7 +2168,11 @@ function buildSharedList(groups, fac) {
       const v = parseFloat(colVal(row,'volume',facCols).replace(/,/g,''));
       return sum + (isNaN(v) ? 0 : v);
     }, 0);
-    const pct     = capacity > 0 ? Math.min(100, totalStock / capacity * 100) : null;
+    const totalNominated = rows.reduce((sum, row) => {
+      const v = parseFloat(colVal(row,'nominated',facCols).replace(/,/g,''));
+      return sum + (isNaN(v) ? 0 : v);
+    }, 0);
+    const pct     = totalNominated > 0 ? Math.min(100, totalStock / totalNominated * 100) : (capacity > 0 ? Math.min(100, totalStock / capacity * 100) : null);
     const status  = sharedTankStatus(rows, fac);
     const product = colVal(rows[0], 'product', facCols);
     const vessels = [...new Set(rows.map(r => colVal(r,'vessel',facCols)).filter(Boolean))].join(', ');
@@ -2162,12 +2184,12 @@ function buildSharedList(groups, fac) {
     const summaryTr = document.createElement('tr');
     summaryTr.className = 'shared-summary-row';
     summaryTr.innerHTML = `
-      <td class="col-tank">Tank ${esc(tankId)}${chip}<span class="mobile-stock">${totalStock.toLocaleString()}${esc(unitStr)} / ${capacity > 0 ? capacity.toLocaleString()+esc(unitStr) : '—'}</span></td>
+      <td class="col-tank">Tank ${esc(tankId)}${chip}<span class="mobile-stock">${totalStock.toLocaleString()}${esc(unitStr)} / ${totalNominated > 0 ? totalNominated.toLocaleString()+esc(unitStr)+' nom.' : '—'}</span></td>
       <td class="col-product col-shared-meta">${esc(product)}</td>
       <td class="col-product col-shared-meta">${esc(vessels)}</td>
       <td class="col-product" style="color:var(--muted)">— total —</td>
       <td class="col-num">${totalStock.toLocaleString()}${esc(unitStr)}</td>
-      <td class="col-num">${capacity.toLocaleString()}${esc(unitStr)}</td>
+      <td class="col-num">${totalNominated > 0 ? totalNominated.toLocaleString()+esc(unitStr) : '—'}</td>
       <td class="col-pct">
         <div class="pct-cell">
           <div class="pct-track"><div class="pct-fill ${status}" style="width:${barWidth}%"></div></div>
