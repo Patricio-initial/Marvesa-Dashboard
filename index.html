@@ -359,6 +359,19 @@
     /* Stock value shown inline on mobile when col-num columns are hidden */
     .mobile-stock { display: none; font-size: .72rem; color: var(--muted); font-weight: 400; margin-left: .3rem; }
 
+    /* ─── Pagos / Cashflow view ──────────────────────────────── */
+    .pagos-filters { display: flex; align-items: center; gap: .625rem; flex-wrap: wrap; margin-bottom: 1.125rem; }
+    .pagos-filters label { font-size: .75rem; color: var(--muted); display: flex; flex-direction: column; gap: .25rem; }
+    .pagos-filters select, .pagos-filters input[type="date"] {
+      padding: .375rem .625rem; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); font-size: .8125rem;
+    }
+    .pagos-summary-note { font-size: .75rem; color: var(--muted); margin: -.5rem 0 1rem; }
+    .pagos-overdue { color: var(--red); font-weight: 700; }
+    .pagos-negative { color: var(--red); }
+    .cashflow-month-row td { font-weight: 700; background: rgba(0,0,0,.025); }
+    html.dark .cashflow-month-row td { background: rgba(255,255,255,.04); }
+
     /* ─── Responsive ─────────────────────────────────────────── */
     @media (max-width: 900px)  { .main { padding: 1rem; } .summary-grid { grid-template-columns: repeat(2,1fr); } }
     @media (max-width: 700px)  {
@@ -509,7 +522,12 @@ const CONFIG = {
 
   defaultUnit: "kg",
   thresholds:  { optimal: 95 },
-  refreshMinutes: 5
+  refreshMinutes: 5,
+
+  /* ── Pagos / Cashflow feed (facturas recibidas: pagadas + pendientes) ── */
+  /* Header row: Cliente | Factura Nro | u$S | Pesos | IVA | total | Tc | Pesos | Acreditar | RET IG | control | F.Vtp | (blank) | Fecha Efva de Pago
+     Sección "PENDIENTES DE PAGO" (fila título + fila en blanco) separa facturas pagas (arriba) de pendientes (abajo). */
+  pagosUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2iJWZ3dVg6Qg1k4d1ysbOSOh5idd8_iGmTcSfVPgC_hf5QQ8kGSwqnMnlFTe0Ug/pub?gid=1210614484&single=true&output=csv"
 };
 </script>
 <!-- ═══════════════════════════════════════════════════════════ -->
@@ -657,6 +675,22 @@ const CONFIG = {
     <div id="nominations-container"><div class="loading-msg">Cargando…</div></div>
   </div><!-- /#nominations-view -->
 
+  <!-- ══ Pagos / Cashflow view (hidden by default) ═══════════ -->
+  <div id="pagos-view" style="display:none">
+    <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+      <button id="pagos-back-btn" onclick="pagosGoBack()" style="display:flex;align-items:center;gap:.35rem;padding:.35rem .75rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:.85rem;cursor:pointer;font-weight:600">← Volver</button>
+      <h2 style="font-size:1.1rem;font-weight:800;color:var(--text)">💰 Pagos</h2>
+      <span style="font-size:.8rem;color:var(--muted)">Facturas recibidas — pagadas y pendientes</span>
+    </div>
+
+    <div class="subtabs-row">
+      <button class="subtab active" id="pagos-subtab-pagadas" onclick="setPagosSubTab('pagadas')">✅ Pagadas</button>
+      <button class="subtab" id="pagos-subtab-pendientes" onclick="setPagosSubTab('pendientes')">⏳ Pendientes (Cashflow)</button>
+    </div>
+
+    <div id="pagos-container"><div class="loading-msg">Cargando…</div></div>
+  </div><!-- /#pagos-view -->
+
 </main>
 
 
@@ -683,6 +717,15 @@ let shippersCache   = {};       // url → normalised shipper rows (invalidated 
 
 /* ── Nominations state ─────────────────────────────────────── */
 let showNominations = false;
+
+/* ── Pagos / Cashflow state ────────────────────────────────── */
+let showPagos       = false;
+let pagosSubTab     = 'pagadas';   // 'pagadas' | 'pendientes'
+let pagosDataCache  = null;        // { pagadas: [...rows], pendientes: [...rows] }
+let pagosFilters    = {
+  pagadasYear: '',     pagadasCliente: '',
+  pendientesCliente: '', pendientesDesde: '', pendientesHasta: ''
+};
 
 /* ── Tank detail state ─────────────────────────────────────── */
 let historyFeedCache        = {};   // url → [{row, year, date}]
@@ -731,6 +774,40 @@ function fmtDate(d) {
   const mm = String(d.getMonth()+1).padStart(2,'0');
   const yy = d.getFullYear();
   return `${dd}/${mm}/${yy}`;
+}
+
+/* ── Argentine accounting number parser ──────────────────────
+   Handles "1.234.567,89" (thousands=. decimal=,), "(1.308,88)" as
+   negative (accounting notation), and stray text like "Euros 250"
+   (digits are extracted, non-numeric content is ignored).        */
+function parseMoneyAR(raw) {
+  let s = String(raw ?? '').trim();
+  if (!s) return 0;
+  let neg = false;
+  if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+  s = s.replace(/[^\d,.\-]/g, '');
+  if (!s) return 0;
+  s = s.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
+  if (isNaN(n)) return 0;
+  return neg ? -n : n;
+}
+
+/* ── Argentine date parser: "DD/MM/YYYY" or "DD/MM/YY" ───────── */
+function parseDateAR(raw) {
+  const s = String(raw ?? '').trim();
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (!m) return null;
+  let [, d, mo, y] = m;
+  d = parseInt(d, 10); mo = parseInt(mo, 10); y = parseInt(y, 10);
+  if (y < 100) y += 2000;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const date = new Date(y, mo - 1, d);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+function fmtMoney(n) {
+  return '$ ' + (n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 
@@ -1240,9 +1317,11 @@ function showMainView() {
   currentTankStock = 0;
   tankTimeline     = [];
   showNominations  = false;
+  showPagos        = false;
 
   document.getElementById('tank-detail').style.display       = 'none';
   document.getElementById('nominations-view').style.display  = 'none';
+  document.getElementById('pagos-view').style.display        = 'none';
   document.getElementById('main-content').style.display      = 'block';
 }
 
@@ -1453,6 +1532,296 @@ function nomToggle(id) {
   if (!detail) return;
   detail.classList.toggle('hidden');
   hdr.classList.toggle('open');
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   PAGOS / CASHFLOW VIEW
+   ══════════════════════════════════════════════════════════════
+   Sheet layout (single CSV, one header row):
+     Cliente | Factura Nro | u$S | Pesos | IVA | total | Tc | Pesos
+     | Acreditar | RET IG | control | F.Vtp | (blank) | Fecha Efva de Pago
+   A "PENDIENTES DE PAGO" title row splits paid invoices (above)
+   from pending invoices (below).
+   ══════════════════════════════════════════════════════════════ */
+
+function pagosParseRow(r) {
+  const total  = parseMoneyAR(r[5]);
+  const tc     = parseMoneyAR(r[6]);
+  const pesos2 = parseMoneyAR(r[7]);
+  const arsAmount = pesos2 !== 0 ? pesos2 : (tc !== 0 ? total * tc : total);
+  return {
+    cliente:    String(r[0] ?? '').trim(),
+    facturaNro: String(r[1] ?? '').trim(),
+    usd:        parseMoneyAR(r[2]),
+    pesos1:     parseMoneyAR(r[3]),
+    iva:        parseMoneyAR(r[4]),
+    total,
+    tc,
+    pesos2,
+    acreditar:  parseMoneyAR(r[8]),
+    retIG:      parseMoneyAR(r[9]),
+    fVto:       parseDateAR(r[11]),
+    fPago:      parseDateAR(r[13]),
+    arsAmount
+  };
+}
+
+function pagosIsDataRow(r) {
+  return !!(String(r[0] ?? '').trim() || String(r[1] ?? '').trim());
+}
+
+function pagosSplitSections(rows) {
+  let headerIdx = rows.findIndex(r => String(r[0] ?? '').trim().toLowerCase() === 'cliente');
+  if (headerIdx === -1) headerIdx = 0;
+  const body = rows.slice(headerIdx + 1);
+  const titleIdx = body.findIndex(r => /pendientes/i.test(String(r[0] ?? '')));
+  const paidRows    = titleIdx === -1 ? body : body.slice(0, titleIdx);
+  const pendingRows = titleIdx === -1 ? []   : body.slice(titleIdx + 1);
+  return {
+    pagadas:    paidRows.filter(pagosIsDataRow).map(pagosParseRow),
+    pendientes: pendingRows.filter(pagosIsDataRow).map(pagosParseRow)
+  };
+}
+
+async function loadPagosData(force) {
+  if (pagosDataCache && !force) return pagosDataCache;
+  if (isPlaceholder(CONFIG.pagosUrl)) throw new Error('CONFIG.pagosUrl no está configurada.');
+  const resp = await fetch(CONFIG.pagosUrl, { cache: 'no-cache' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const text = await resp.text();
+  const { data } = Papa.parse(text, { header: false, skipEmptyLines: true });
+  pagosDataCache = pagosSplitSections(data);
+  return pagosDataCache;
+}
+
+async function renderPagosView() {
+  const container = document.getElementById('pagos-container');
+  container.innerHTML = '<div class="loading-msg">Cargando pagos…</div>';
+  try {
+    await loadPagosData();
+    if (pagosSubTab === 'pendientes') renderPagosPendientes();
+    else renderPagosPagadas();
+  } catch(e) {
+    container.innerHTML = `<div class="error-msg">Error cargando pagos: ${esc(e.message)}</div>`;
+  }
+}
+
+function setPagosSubTab(tab) {
+  pagosSubTab = tab;
+  document.getElementById('pagos-subtab-pagadas')?.classList.toggle('active', tab === 'pagadas');
+  document.getElementById('pagos-subtab-pendientes')?.classList.toggle('active', tab === 'pendientes');
+  if (tab === 'pendientes') renderPagosPendientes(); else renderPagosPagadas();
+}
+
+function pagosGoBack() {
+  showPagos = false;
+  document.getElementById('pagos-view').style.display   = 'none';
+  document.getElementById('main-content').style.display = 'block';
+  renderTabs();
+  renderTankGrid();
+}
+
+function pagosToggleGroup(id) {
+  const detail = document.getElementById(id + '-detail');
+  const hdr    = document.getElementById(id + '-hdr');
+  if (!detail) return;
+  detail.classList.toggle('hidden');
+  hdr.classList.toggle('open');
+}
+
+/* ── Pagadas: pantallazo filtrado por año + proveedor ────────── */
+function renderPagosPagadas() {
+  const container = document.getElementById('pagos-container');
+  const rows = pagosDataCache?.pagadas || [];
+
+  const years    = [...new Set(rows.map(r => r.fPago?.getFullYear()).filter(Boolean))].sort((a,b) => b-a);
+  const clientes = [...new Set(rows.map(r => r.cliente).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+
+  const filtered = rows.filter(r => {
+    if (pagosFilters.pagadasYear && String(r.fPago?.getFullYear() || '') !== pagosFilters.pagadasYear) return false;
+    if (pagosFilters.pagadasCliente && r.cliente !== pagosFilters.pagadasCliente) return false;
+    return true;
+  });
+
+  const totalArs       = filtered.reduce((s,r) => s + r.arsAmount, 0);
+  const totalAcreditar = filtered.reduce((s,r) => s + r.acreditar, 0);
+
+  const groups = {};
+  filtered.forEach(r => {
+    const key = r.cliente || '(Sin cliente)';
+    if (!groups[key]) groups[key] = { cliente: key, rows: [], totalArs: 0, totalAcreditar: 0 };
+    groups[key].rows.push(r);
+    groups[key].totalArs       += r.arsAmount;
+    groups[key].totalAcreditar += r.acreditar;
+  });
+  const groupList = Object.values(groups).sort((a,b) => b.totalArs - a.totalArs);
+
+  const yearOptions    = `<option value="">Todos</option>` +
+    years.map(y => `<option value="${y}" ${pagosFilters.pagadasYear === String(y) ? 'selected' : ''}>${y}</option>`).join('');
+  const clienteOptions = `<option value="">Todos</option>` +
+    clientes.map(c => `<option value="${esc(c)}" ${pagosFilters.pagadasCliente === c ? 'selected' : ''}>${esc(c)}</option>`).join('');
+
+  let html = `
+    <div class="pagos-filters">
+      <label>Año
+        <select onchange="pagosFilters.pagadasYear=this.value; renderPagosPagadas()">${yearOptions}</select>
+      </label>
+      <label>Proveedor
+        <select onchange="pagosFilters.pagadasCliente=this.value; renderPagosPagadas()">${clienteOptions}</select>
+      </label>
+    </div>
+    <div class="summary-grid" style="grid-template-columns:repeat(3,1fr);max-width:820px">
+      <div class="summary-card">
+        <span class="label">Total Facturado</span>
+        <span class="value" style="font-size:1.35rem">${fmtMoney(totalArs)}</span>
+      </div>
+      <div class="summary-card s-optimal">
+        <span class="label">Total Acreditado</span>
+        <span class="value" style="font-size:1.35rem">${fmtMoney(totalAcreditar)}</span>
+      </div>
+      <div class="summary-card">
+        <span class="label">Facturas</span>
+        <span class="value" style="font-size:1.35rem">${filtered.length}</span>
+      </div>
+    </div>
+    <div class="pagos-summary-note">Total facturado = monto total en pesos (convertido con Tc cuando corresponde). Acreditado = columna "Acreditar" de la planilla. Año tomado de "Fecha Efva de Pago".</div>`;
+
+  if (!groupList.length) {
+    html += `<div class="no-results">No hay facturas pagas para el filtro seleccionado.</div>`;
+  } else {
+    groupList.forEach((g, i) => {
+      const gid = 'pg-' + i;
+      html += `
+      <div class="nom-supplier">
+        <div class="nom-supplier-header open" id="${gid}-hdr" onclick="pagosToggleGroup('${gid}')">
+          <div class="nom-title">
+            <div class="nom-name">${esc(g.cliente)}</div>
+            <div class="nom-facs">${g.rows.length} factura${g.rows.length === 1 ? '' : 's'}</div>
+          </div>
+          <div class="nom-totals">
+            <strong>${fmtMoney(g.totalArs)}</strong> facturado · ${fmtMoney(g.totalAcreditar)} acreditado
+          </div>
+          <span class="nom-chevron">▲</span>
+        </div>
+        <div class="nom-detail" id="${gid}-detail">
+          <div class="table-wrap" style="box-shadow:none;border-top:1px solid var(--border)">
+            <table class="tank-table">
+              <thead><tr><th>Factura Nro</th><th>Fecha de Pago</th><th class="col-num">Total</th><th class="col-num">Acreditar</th></tr></thead>
+              <tbody>
+                ${g.rows.map(r => `<tr>
+                  <td>${esc(r.facturaNro || '—')}</td>
+                  <td>${fmtDate(r.fPago)}</td>
+                  <td class="col-num ${r.arsAmount < 0 ? 'pagos-negative' : ''}">${fmtMoney(r.arsAmount)}</td>
+                  <td class="col-num">${fmtMoney(r.acreditar)}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+    });
+  }
+
+  container.innerHTML = html;
+}
+
+/* ── Pendientes: cashflow con filtro de proveedor + vencimiento ─ */
+function renderPagosPendientes() {
+  const container = document.getElementById('pagos-container');
+  const rows = pagosDataCache?.pendientes || [];
+
+  const clientes = [...new Set(rows.map(r => r.cliente).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+
+  const desde = pagosFilters.pendientesDesde ? new Date(pagosFilters.pendientesDesde + 'T00:00:00') : null;
+  const hasta = pagosFilters.pendientesHasta ? new Date(pagosFilters.pendientesHasta + 'T23:59:59') : null;
+
+  const filtered = rows.filter(r => {
+    if (pagosFilters.pendientesCliente && r.cliente !== pagosFilters.pendientesCliente) return false;
+    if (desde && (!r.fVto || r.fVto < desde)) return false;
+    if (hasta && (!r.fVto || r.fVto > hasta)) return false;
+    return true;
+  });
+
+  const totalArs = filtered.reduce((s,r) => s + r.arsAmount, 0);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const overdue      = filtered.filter(r => r.fVto && r.fVto < today);
+  const overdueTotal = overdue.reduce((s,r) => s + r.arsAmount, 0);
+
+  const clienteOptions = `<option value="">Todos</option>` +
+    clientes.map(c => `<option value="${esc(c)}" ${pagosFilters.pendientesCliente === c ? 'selected' : ''}>${esc(c)}</option>`).join('');
+
+  const monthGroups = {};
+  filtered.forEach(r => {
+    const key = r.fVto ? `${r.fVto.getFullYear()}-${String(r.fVto.getMonth()+1).padStart(2,'0')}` : 'Sin fecha';
+    monthGroups[key] = (monthGroups[key] || 0) + r.arsAmount;
+  });
+  const monthKeys = Object.keys(monthGroups).sort();
+
+  const sortedRows = filtered.slice().sort((a,b) => {
+    if (!a.fVto) return 1;
+    if (!b.fVto) return -1;
+    return a.fVto - b.fVto;
+  });
+
+  let html = `
+    <div class="pagos-filters">
+      <label>Proveedor
+        <select onchange="pagosFilters.pendientesCliente=this.value; renderPagosPendientes()">${clienteOptions}</select>
+      </label>
+      <label>Vencimiento desde
+        <input type="date" value="${esc(pagosFilters.pendientesDesde)}" onchange="pagosFilters.pendientesDesde=this.value; renderPagosPendientes()">
+      </label>
+      <label>Vencimiento hasta
+        <input type="date" value="${esc(pagosFilters.pendientesHasta)}" onchange="pagosFilters.pendientesHasta=this.value; renderPagosPendientes()">
+      </label>
+    </div>
+    <div class="summary-grid" style="grid-template-columns:repeat(3,1fr);max-width:820px">
+      <div class="summary-card s-warning">
+        <span class="label">Total Pendiente</span>
+        <span class="value" style="font-size:1.35rem">${fmtMoney(totalArs)}</span>
+      </div>
+      <div class="summary-card" style="border-left-color:var(--red)">
+        <span class="label">Vencidas</span>
+        <span class="value" style="font-size:1.35rem;color:var(--red)">${overdue.length} · ${fmtMoney(overdueTotal)}</span>
+      </div>
+      <div class="summary-card">
+        <span class="label">Facturas</span>
+        <span class="value" style="font-size:1.35rem">${filtered.length}</span>
+      </div>
+    </div>`;
+
+  if (!filtered.length) {
+    html += `<div class="no-results">No hay facturas pendientes para el filtro seleccionado.</div>`;
+  } else {
+    html += `
+    <div class="table-wrap" style="margin-bottom:1.25rem">
+      <table class="tank-table">
+        <thead><tr><th>Mes de vencimiento</th><th class="col-num">Monto pendiente</th></tr></thead>
+        <tbody>
+          ${monthKeys.map(k => `<tr class="cashflow-month-row"><td>${esc(k)}</td><td class="col-num">${fmtMoney(monthGroups[k])}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="table-wrap">
+      <table class="tank-table">
+        <thead><tr><th>Cliente</th><th>Factura Nro</th><th>Vencimiento</th><th class="col-num">Monto</th></tr></thead>
+        <tbody>
+          ${sortedRows.map(r => {
+            const isOverdue = r.fVto && r.fVto < today;
+            return `<tr>
+              <td>${esc(r.cliente || '—')}</td>
+              <td>${esc(r.facturaNro || '—')}</td>
+              <td class="${isOverdue ? 'pagos-overdue' : ''}">${fmtDate(r.fVto)}${isOverdue ? ' ⚠' : ''}</td>
+              <td class="col-num ${r.arsAmount < 0 ? 'pagos-negative' : ''}">${fmtMoney(r.arsAmount)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  container.innerHTML = html;
 }
 
 
@@ -1912,7 +2281,7 @@ function renderTabs() {
   wrap.innerHTML = '';
   allFacilityData.forEach((f, i) => {
     const btn = document.createElement('button');
-    btn.className = 'tab' + (!showNominations && i === activeFacility ? ' active' : '');
+    btn.className = 'tab' + (!showNominations && !showPagos && i === activeFacility ? ' active' : '');
     const warnCount = getFacilityTankStatuses(f).filter(s => s==='warning').length;
     const histBadge = f.showHistory ? `<span class="history-hint">history</span>` : '';
     btn.innerHTML = esc(f.name) + (warnCount ? ` (${warnCount} ⚠)` : '') + histBadge;
@@ -1920,7 +2289,9 @@ function renderTabs() {
       activeFacility  = i;
       carboclorSubTab = 'tanks';
       showNominations = false;
+      showPagos       = false;
       document.getElementById('nominations-view').style.display = 'none';
+      document.getElementById('pagos-view').style.display       = 'none';
       document.getElementById('main-content').style.display     = 'block';
       renderTabs();
       renderTankGrid();
@@ -1934,19 +2305,37 @@ function renderTabs() {
   nomBtn.innerHTML = '📋 Nominaciones';
   nomBtn.onclick = () => {
     showNominations = true;
+    showPagos       = false;
     document.getElementById('main-content').style.display     = 'none';
     document.getElementById('tank-detail').style.display      = 'none';
+    document.getElementById('pagos-view').style.display       = 'none';
     document.getElementById('nominations-view').style.display = 'block';
     renderTabs();
     renderNominationsView();
   };
   wrap.appendChild(nomBtn);
 
-  // Show sub-tabs only when on a facility view (not nominations)
+  // Pagos tab
+  const pagosBtn = document.createElement('button');
+  pagosBtn.className = 'tab' + (showPagos ? ' active' : '');
+  pagosBtn.innerHTML = '💰 Pagos';
+  pagosBtn.onclick = () => {
+    showPagos       = true;
+    showNominations = false;
+    document.getElementById('main-content').style.display     = 'none';
+    document.getElementById('tank-detail').style.display      = 'none';
+    document.getElementById('nominations-view').style.display = 'none';
+    document.getElementById('pagos-view').style.display       = 'block';
+    renderTabs();
+    renderPagosView();
+  };
+  wrap.appendChild(pagosBtn);
+
+  // Show sub-tabs only when on a facility view (not nominations/pagos)
   const fac = allFacilityData[activeFacility];
-  const showSub = !showNominations && !!(fac?.shippersUrl);
+  const showSub = !showNominations && !showPagos && !!(fac?.shippersUrl);
   document.getElementById('subtabs-row').style.display = showSub ? '' : 'none';
-  document.getElementById('sort-row').style.display    = (!showNominations && (!showSub || carboclorSubTab === 'tanks')) ? '' : 'none';
+  document.getElementById('sort-row').style.display    = (!showNominations && !showPagos && (!showSub || carboclorSubTab === 'tanks')) ? '' : 'none';
   document.getElementById('subtab-tanks')?.classList.toggle('active',    carboclorSubTab === 'tanks');
   document.getElementById('subtab-shippers')?.classList.toggle('active', carboclorSubTab === 'shippers');
 }
@@ -2536,6 +2925,7 @@ async function doRefresh() {
   if (document.getElementById('main-content').style.display !== 'none') {
     renderTankGrid();
   }
+  if (showPagos) renderPagosView();
   updateTimestamps();
   nextRefreshAt = Date.now() + CONFIG.refreshMinutes * 60 * 1000;
   clearTimeout(refreshTimer);
@@ -2550,6 +2940,7 @@ function manualRefresh() {
   historyCache     = {};
   shippersCache    = {};
   tankFeedCache    = {};
+  pagosDataCache   = null;
   doRefresh();
 }
 
