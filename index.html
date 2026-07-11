@@ -1494,13 +1494,35 @@ function parseDateFull(str) {
   return new Date(y, m - 1, d);
 }
 
+/* Parse numbers from history CSV that may use European format (dot=thousands, comma=decimal) */
+function parseHistNum(raw) {
+  const s = String(raw || '').trim().replace(/\s/g, '');
+  if (!s || s === '-' || s === '—') return NaN;
+  const lastDot   = s.lastIndexOf('.');
+  const lastComma = s.lastIndexOf(',');
+  if (lastDot !== -1 && lastComma !== -1) {
+    // Both separators: whichever comes last is the decimal
+    return lastComma > lastDot
+      ? parseFloat(s.replace(/\./g, '').replace(',', '.'))  // European: "1.448,06"
+      : parseFloat(s.replace(/,/g, ''));                     // US:       "1,448.06"
+  } else if (lastComma !== -1) {
+    const after = s.slice(lastComma + 1);
+    return after.length !== 3
+      ? parseFloat(s.replace(',', '.'))   // decimal comma: "748,5"
+      : parseFloat(s.replace(',', ''));   // thousands comma: "1,448"
+  } else if ((s.match(/\./g) || []).length > 1) {
+    return parseFloat(s.replace(/\./g, ''));  // multiple dots = European thousands: "1.448.060"
+  }
+  return parseFloat(s);
+}
+
 function getDailyPoints(rows) {
   const byDay = {};
   const now = new Date();
   const minYear = 2000, maxYear = now.getFullYear() + 1;
   rows.forEach(r => {
     const dateStr = r[1].trim();
-    const val = parseFloat(r[8]);
+    const val = parseHistNum(r[8]);
     if (isNaN(val)) return;
     const parsed = parseDateFull(dateStr);
     const yr = parsed.getFullYear();
@@ -1677,8 +1699,8 @@ async function renderTPRActivity(url) {
       const type     = String(r[2] || '').trim();
       const supplier = String(r[3] || '').trim();
       const product  = String(r[4] || '').trim();
-      const qtyMT    = parseFloat(r[5]);
-      const stockMT  = parseFloat(r[8]);
+      const qtyMT    = parseHistNum(r[5]);
+      const stockMT  = parseHistNum(r[8]);
       const qtyKg    = isNaN(qtyMT)   ? null : Math.round(qtyMT  * 1000);
       const stockKg  = isNaN(stockMT) ? null : Math.round(stockMT * 1000);
       const isIn     = /in/i.test(type);
