@@ -1282,14 +1282,27 @@ async function loadNominationRows() {
     try {
       const shRows = await fetchCSV(facData.shippersUrl);
       const sc     = facData.shippersColumns || {};
+      // Trim-aware column lookup (handles headers with leading/trailing spaces)
+      const findCol = (row, name) => {
+        if (!name) return '';
+        const k = Object.keys(row).find(k => k.trim().toLowerCase() === name.trim().toLowerCase());
+        return k ? (row[k] || '').trim() : '';
+      };
       shRows.forEach(row => {
-        const shipper   = (row['Shipper'] || '').trim();
-        const product   = (row['Product'] || '').trim();
-        const stock     = parseKg(row[sc.stock]     || '0');
-        const nominated = parseKg(row[sc.nominated] || '0');
-        const tank      = (row[sc.tank] || row['Tanks'] || row['Tank'] || '').trim() || null;
+        const shipper   = findCol(row, 'Shipper');
+        const product   = findCol(row, 'Product');
+        const stock     = parseKg(findCol(row, sc.stock)     || '0');
+        const nominated = parseKg(findCol(row, sc.nominated) || '0');
+        // Tank cell may contain multiple tanks separated by space, comma, slash, or dash
+        const tankRaw   = findCol(row, sc.tank) || findCol(row, 'Tanks') || findCol(row, 'Tank');
+        const tanks     = tankRaw
+          ? tankRaw.split(/[\s,\/]+/).map(t => t.trim()).filter(Boolean)
+          : [null];
         if (!shipper || /^total$/i.test(shipper)) return;
-        rows.push({ facility: facData.name, shipper, product, stock, nominated, tank });
+        // Emit one row per tank (or one row with tank=null if no tank info)
+        tanks.forEach(tank => {
+          rows.push({ facility: facData.name, shipper, product, stock: stock / tanks.length, nominated: nominated / tanks.length, tank });
+        });
       });
     } catch(e) {
       console.warn(`Nominations: ${facData.name} shippers failed:`, e.message);
