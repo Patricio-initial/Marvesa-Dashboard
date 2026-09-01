@@ -666,7 +666,7 @@ const CONFIG = {
    STATE
    ══════════════════════════════════════════════════════════════ */
 let allFacilityData = [];
-let activeFacility  = 0;
+let activeFacility  = -1;  // -1 = not yet set; resolved to Voxen on first load
 let currentSort     = 'status';
 let currentView     = window.innerWidth <= 768 ? 'cards' : 'list';
 let refreshTimer    = null;
@@ -858,21 +858,31 @@ async function getAllTankHistory(tankId) {
   return combined;
 }
 
-/* Build running-stock timeline from sorted annotated rows */
-function buildTankTimeline(items) {
+/* Build running-stock timeline from sorted annotated rows.
+   anchorStock: current stock from the sheet (ground truth).
+   If provided, all points are shifted so the last history point
+   aligns with anchorStock, making the chart show absolute levels. */
+function buildTankTimeline(items, anchorStock) {
   let running = 0;
-  return items.map(item => {
-    const kgs = parseKg(item.row[4]);  // col 4 = Kgs
+  const raw = items.map(item => {
+    const kgs = parseKg(item.row[4]);  // col 4 = Kgs (signed)
     running  += kgs;
     return {
       date:      item.date,
-      stock:     Math.max(0, running),  // floor at 0 for display
+      stock:     running,
       kgs,
       supplier:  String(item.row[2] || '').trim(),
       material:  String(item.row[3] || '').trim(),
       feedLabel: item.feedLabel || ''
     };
   });
+  if (!raw.length) return raw;
+  // Rebase: shift all points so the final cumulative matches the sheet's current stock
+  if (typeof anchorStock === 'number' && anchorStock >= 0) {
+    const offset = anchorStock - raw[raw.length - 1].stock;
+    return raw.map(p => ({ ...p, stock: Math.max(0, p.stock + offset) }));
+  }
+  return raw.map(p => ({ ...p, stock: Math.max(0, p.stock) }));
 }
 
 /* Filter timeline by period (reused for both TPR and tank charts) */
@@ -1120,14 +1130,14 @@ function getTankCapacity(tankId) {
   return parseKg(colVal(row,'capacity',cols));
 }
 
-function renderDetailStats(tankId, timeline) {
+function renderDetailStats(tankId, timeline, sheetStock) {
   const el = document.getElementById('detail-stats');
   if (!el) return;
 
   // Get current info from the active facility's CSV
   const fac  = allFacilityData[currentDetailFacilityIdx];
   const cols = fac?.columns || CONFIG.columns;
-  let currentStock = 0, capacity = 0, product = '—', status = 'unknown';
+  let currentStock = sheetStock ?? 0, capacity = 0, product = '—', status = 'unknown';
 
   if (fac && fac.tanks.length) {
     const row = fac.tanks.find(r => colVal(r,'name',cols) === String(tankId));
@@ -1139,25 +1149,42 @@ function renderDetailStats(tankId, timeline) {
     }
   }
 
-  // Also show computed stock from history timeline (most recent point)
-  const lastPoint = timeline.length ? timeline[timeline.length - 1] : null;
-  const histStock = lastPoint ? lastPoint.stock : null;
-
   const pct      = capacity > 0 ? Math.min(100, currentStock / capacity * 100) : null;
   const pctDisp  = pct !== null ? pct.toFixed(1) + '%' : '—';
   const statusColor = { optimal: 'var(--green)', warning: 'var(--yellow)', loading: '#3b82f6', unknown: 'var(--muted)' }[status] || 'var(--muted)';
 
+  // Cross-check: compare sheet stock vs raw cumulative from history (before rebasing)
+  // The timeline was already rebased to sheetStock, so the last point == sheetStock.
+  // Instead, check if history has enough data by looking at span coverage.
+  // If timeline is empty we can't cross-check.
+  const hasHistory = timeline.length > 0;
+  const rawCumulative = timeline.reduce((sum, p) => sum + (p.kgs || 0), 0);
+  // Difference between sheet stock and what history sums to from baseline
+  const drift = hasHistory ? Math.abs(currentStock - rawCumulative) : null;
+  const driftPct = (drift !== null && currentStock > 0) ? drift / currentStock * 100 : null;
+  // Flag if drift > 5% and > 5000 kg (avoid noise on small tanks)
+  const mismatch = driftPct !== null && driftPct > 5 && drift > 5000;
+
+  const consistencyBadge = !hasHistory ? '' : mismatch
+    ? `<span title="El historial acumulado difiere del stock de la planilla en ${Math.round(drift).toLocaleString()} kg. Pueden faltar operaciones en el historial."
+             style="font-size:.7rem;padding:.15rem .4rem;border-radius:4px;background:rgba(245,158,11,.15);color:var(--yellow);border:1px solid rgba(245,158,11,.3);cursor:help">
+         ⚠ historia incompleta
+       </span>`
+    : `<span style="font-size:.7rem;padding:.15rem .4rem;border-radius:4px;background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.25)">
+         ✓ consistente
+       </span>`;
+
   el.innerHTML = `
     <div class="summary-card" style="border-left-color:${statusColor}">
-      <span class="label">Current Stock</span>
+      <span class="label">Stock actual ${consistencyBadge}</span>
       <span class="value" style="font-size:1.5rem;color:${statusColor}">${currentStock.toLocaleString()} kg</span>
     </div>
     <div class="summary-card">
-      <span class="label">Capacity</span>
+      <span class="label">Capacidad</span>
       <span class="value" style="font-size:1.5rem">${capacity > 0 ? capacity.toLocaleString() + ' kg' : '—'}</span>
     </div>
     <div class="summary-card">
-      <span class="label">Fill %</span>
+      <span class="label">Ocupación</span>
       <span class="value" style="font-size:1.5rem;color:${statusColor}">${pctDisp}</span>
     </div>`;
 }
@@ -1215,16 +1242,17 @@ async function showTankDetail(tankId) {
 
   try {
     const items    = await getAllTankHistory(tankId);
-    tankTimeline   = buildTankTimeline(items);
     const capacity = getTankCapacity(tankId);
 
-    // Capture actual stock from main CSV so the chart can anchor its endpoint
+    // Resolve sheet stock first so timeline can be rebased to it
     const activeFac  = allFacilityData[currentDetailFacilityIdx];
     const activeCols = activeFac?.columns || CONFIG.columns;
     const mainRow    = activeFac?.tanks.find(r => colVal(r,'name',activeCols) === String(tankId));
     currentTankStock = mainRow ? parseKg(colVal(mainRow,'volume',activeCols)) : 0;
 
-    renderDetailStats(tankId, tankTimeline);
+    tankTimeline = buildTankTimeline(items, currentTankStock);
+
+    renderDetailStats(tankId, tankTimeline, currentTankStock);
     renderTankChartSection(tankTimeline, capacity, currentTankStock);
     renderActivityTable(tankTimeline);
   } catch(e) {
@@ -2569,6 +2597,11 @@ async function doRefresh() {
   const btn = document.getElementById('refresh-btn');
   btn.disabled = true; btn.textContent = '⟳ Loading…';
   await loadAll();
+  // On first load, default to Voxen; fallback to first facility
+  if (activeFacility === -1) {
+    const voxIdx = allFacilityData.findIndex(f => f.name === 'Voxen');
+    activeFacility = voxIdx >= 0 ? voxIdx : 0;
+  }
   renderSummary();
   renderTabs();
   // Only re-render main grid if we're on the main view
