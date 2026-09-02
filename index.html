@@ -1166,9 +1166,11 @@ function renderDetailStats(tankId, timeline, sheetStock) {
   const mismatch = driftPct !== null && driftPct > 5 && drift > 5000;
 
   const consistencyBadge = !hasHistory ? '' : mismatch
-    ? `<span title="El historial acumulado difiere del stock de la planilla en ${Math.round(drift).toLocaleString()} kg. Pueden faltar operaciones en el historial."
-             style="font-size:.7rem;padding:.15rem .4rem;border-radius:4px;background:rgba(245,158,11,.15);color:var(--yellow);border:1px solid rgba(245,158,11,.3);cursor:help">
-         ⚠ historia incompleta
+    ? `<span style="font-size:.7rem;padding:.15rem .4rem;border-radius:4px;background:rgba(245,158,11,.15);color:var(--yellow);border:1px solid rgba(245,158,11,.3)">
+         ⚠ historia incompleta &mdash;
+         planilla: <strong>${Math.round(currentStock).toLocaleString()} kg</strong> ·
+         historial: <strong>${Math.round(rawCumulative).toLocaleString()} kg</strong>
+         (${driftPct.toFixed(1)}% de diferencia)
        </span>`
     : `<span style="font-size:.7rem;padding:.15rem .4rem;border-radius:4px;background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.25)">
          ✓ consistente
