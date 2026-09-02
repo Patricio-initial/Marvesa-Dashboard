@@ -1297,10 +1297,11 @@ async function loadNominationRows() {
         const shipper   = colVal(row, 'shipper',   fc).trim();
         const tank      = colVal(row, 'name',      fc).trim();
         const product   = colVal(row, 'product',   fc).trim();
+        const vessel    = colVal(row, 'vessel',    fc).trim();
         const stock     = parseKg(colVal(row, 'volume',    fc));
         const nominated = parseKg(colVal(row, 'nominated', fc));
         if (!shipper || /^total$/i.test(shipper)) return;
-        rows.push({ facility: facData.name, shipper, product, stock, nominated, tank });
+        rows.push({ facility: facData.name, shipper, product, vessel, stock, nominated, tank });
       });
       continue;
     }
@@ -1321,6 +1322,7 @@ async function loadNominationRows() {
         const product   = findCol(row, 'Product');
         const stock     = parseKg(findCol(row, sc.stock)     || '0');
         const nominated = parseKg(findCol(row, sc.nominated) || '0');
+        const vessel    = findCol(row, sc.vessel) || findCol(row, 'Vessel') || findCol(row, 'ETF') || '';
         // Tank cell may contain multiple tanks separated by space, comma, slash, or dash
         const tankRaw   = findCol(row, sc.tank) || findCol(row, 'Tanks') || findCol(row, 'Tank');
         const tanks     = tankRaw
@@ -1329,7 +1331,7 @@ async function loadNominationRows() {
         if (!shipper || /^total$/i.test(shipper)) return;
         // Emit one row per tank (or one row with tank=null if no tank info)
         tanks.forEach(tank => {
-          rows.push({ facility: facData.name, shipper, product, stock: stock / tanks.length, nominated: nominated / tanks.length, tank });
+          rows.push({ facility: facData.name, shipper, product, vessel, stock: stock / tanks.length, nominated: nominated / tanks.length, tank });
         });
       });
     } catch(e) {
@@ -1381,22 +1383,23 @@ async function renderNominationsView() {
       return;
     }
 
-    /* Group: SHIPPER_KEY → { name, byFac: { facName → { nom, stk, rows[] } } } */
+    /* Group: SHIPPER_KEY → { name, byVessel: { vesselKey → { nom, stk, facility, rows[] } } } */
     const tree = {};
     rows.forEach(r => {
-      const key = r.shipper.toUpperCase();
-      if (!tree[key]) tree[key] = { name: r.shipper, byFac: {} };
-      if (!tree[key].byFac[r.facility])
-        tree[key].byFac[r.facility] = { nom: 0, stk: 0, rows: [] };
-      tree[key].byFac[r.facility].nom += r.nominated;
-      tree[key].byFac[r.facility].stk += r.stock;
-      tree[key].byFac[r.facility].rows.push(r);
+      const sKey = r.shipper.toUpperCase();
+      const vKey = (r.vessel || '—').trim();
+      if (!tree[sKey]) tree[sKey] = { name: r.shipper, byVessel: {} };
+      if (!tree[sKey].byVessel[vKey])
+        tree[sKey].byVessel[vKey] = { nom: 0, stk: 0, facility: r.facility, vessel: r.vessel || '', rows: [] };
+      tree[sKey].byVessel[vKey].nom += r.nominated;
+      tree[sKey].byVessel[vKey].stk += r.stock;
+      tree[sKey].byVessel[vKey].rows.push(r);
     });
 
-    /* Sort suppliers: non-zero nominated desc, then zero-nom alphabetically */
+    /* Sort suppliers: non-zero nominated desc, then alphabetically */
     const suppliers = Object.values(tree).sort((a, b) => {
-      const nA = Object.values(a.byFac).reduce((s, f) => s + f.nom, 0);
-      const nB = Object.values(b.byFac).reduce((s, f) => s + f.nom, 0);
+      const nA = Object.values(a.byVessel).reduce((s, v) => s + v.nom, 0);
+      const nB = Object.values(b.byVessel).reduce((s, v) => s + v.nom, 0);
       if (nB !== nA) return nB - nA;
       return a.name.localeCompare(b.name);
     });
@@ -1404,12 +1407,12 @@ async function renderNominationsView() {
     let html = '';
 
     for (const sup of suppliers) {
-      const totalNom = Object.values(sup.byFac).reduce((s, f) => s + f.nom, 0);
-      const totalStk = Object.values(sup.byFac).reduce((s, f) => s + f.stk, 0);
+      const totalNom = Object.values(sup.byVessel).reduce((s, v) => s + v.nom, 0);
+      const totalStk = Object.values(sup.byVessel).reduce((s, v) => s + v.stk, 0);
       const pct      = totalNom > 0 ? totalStk / totalNom * 100 : 0;
       const pctLabel = totalNom > 0 ? pct.toFixed(1) + '%' : '—';
       const color    = nomPctColor(pct);
-      const facNames = Object.keys(sup.byFac).join(' · ');
+      const facNames = [...new Set(Object.values(sup.byVessel).map(v => v.facility))].join(' · ');
       const supId    = 'nom-' + sup.name.replace(/\W/g, '_');
 
       html += `
@@ -1432,42 +1435,46 @@ async function renderNominationsView() {
 
         <div class="nom-detail" id="${supId}-detail">`;
 
-      for (const [facName, fd] of Object.entries(sup.byFac)) {
-        const fPct   = fd.nom > 0 ? fd.stk / fd.nom * 100 : 0;
-        const fLabel = fd.nom > 0 ? fPct.toFixed(1) + '%' : '—';
-        const fColor = nomPctColor(fPct);
-        const prods  = [...new Set(fd.rows.map(r => r.product).filter(Boolean))].join(', ');
-        const tankRows = fd.rows.filter(r => r.tank);
-        const hasMultiTank = tankRows.length > 1;
+      for (const [vKey, vd] of Object.entries(sup.byVessel)) {
+        const vPct   = vd.nom > 0 ? vd.stk / vd.nom * 100 : 0;
+        const vLabel = vd.nom > 0 ? vPct.toFixed(1) + '%' : '—';
+        const vColor = nomPctColor(vPct);
+        const prods  = [...new Set(vd.rows.map(r => r.product).filter(Boolean))].join(', ');
+        const vesselLabel = vd.vessel || '—';
 
         html += `
           <div class="nom-fac-row">
             <div class="nom-fac-title">
-              <div class="nom-fac-name">${esc(facName)}</div>
-              ${prods ? `<div class="nom-fac-prod">${esc(prods)}</div>` : ''}
+              <div class="nom-fac-name" style="display:flex;align-items:center;gap:.45rem">
+                <span style="font-size:.78rem;color:var(--muted)">🚢</span>${esc(vesselLabel)}
+              </div>
+              <div class="nom-fac-prod" style="display:flex;gap:.35rem;flex-wrap:wrap">
+                <span style="color:var(--muted)">${esc(vd.facility)}</span>
+                ${prods ? `<span>· ${esc(prods)}</span>` : ''}
+              </div>
             </div>
             <div class="nom-fac-bar-wrap">
               <div class="nom-fac-bar-track">
-                <div class="nom-fac-bar-fill" style="width:${Math.min(fPct,100).toFixed(1)}%;background:${fColor}"></div>
+                <div class="nom-fac-bar-fill" style="width:${Math.min(vPct,100).toFixed(1)}%;background:${vColor}"></div>
               </div>
-              <span class="nom-fac-pct" style="color:${fColor}">${fLabel}</span>
+              <span class="nom-fac-pct" style="color:${vColor}">${vLabel}</span>
             </div>
             <div class="nom-fac-vals">
-              <strong>${nomFmt(fd.stk)}</strong> de ${nomFmt(fd.nom)}
+              <strong>${nomFmt(vd.stk)}</strong> de ${nomFmt(vd.nom)}
             </div>
           </div>`;
 
-        /* Show individual tanks when terminal has >1 tank, or always when tank data is available */
-        tankRows.forEach(r => {
+        /* Individual tank rows under this vessel */
+        vd.rows.filter(r => r.tank).forEach(r => {
           const tPct   = r.nominated > 0 ? r.stock / r.nominated * 100 : null;
           const tColor = tPct !== null ? nomPctColor(tPct) : 'var(--muted)';
           const tLabel = tPct !== null ? tPct.toFixed(1) + '%' : '—';
           const tBarW  = tPct !== null ? Math.min(tPct, 100).toFixed(1) : 0;
           html += `
-          <div class="nom-tank-row" style="display:flex;align-items:center;gap:.75rem;padding:.45rem .75rem .45rem 2rem;border-bottom:1px solid var(--border);flex-wrap:wrap">
+          <div class="nom-tank-row" style="display:flex;align-items:center;gap:.75rem;padding:.45rem .75rem .45rem 2.5rem;border-bottom:1px solid var(--border);flex-wrap:wrap">
             <span class="nom-tank-id" style="min-width:4rem">TK ${esc(r.tank)}</span>
             <div style="flex:1;min-width:120px">
-              <div style="height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+              <div style="height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
                 <div style="height:100%;width:${tBarW}%;background:${tColor};border-radius:3px"></div>
               </div>
             </div>
@@ -1816,15 +1823,16 @@ function fillPct(row, cols) {
 function statusOf(row, cols) {
   const manual = colVal(row,'status',cols).toLowerCase();
   if (['optimal'].includes(manual))                return 'optimal';
-  if (['warning','warn','empty'].includes(manual)) return 'warning';
+  if (['warning','warn'].includes(manual))         return 'warning';
+  if (['empty'].includes(manual))                  return 'empty';
   const pct = fillPct(row, cols);
   if (pct === null)                                return 'unknown';
-  if (pct <= 0)                                    return 'warning';
+  if (pct <= 0)                                    return 'empty';   // empty tanks ≠ warning
   if (pct >= CONFIG.thresholds.optimal)            return 'optimal';
   return 'loading';
 }
 
-function statusWeight(s) { return {warning:0, loading:1, unknown:2, optimal:3}[s] ?? 3; }
+function statusWeight(s) { return {warning:0, loading:1, unknown:2, optimal:3, empty:4}[s] ?? 4; }
 
 
 /* ══════════════════════════════════════════════════════════════
@@ -1968,10 +1976,11 @@ function renderHeader() {
 
 function renderSummary() {
   const statuses = allFacilityData.flatMap(f => getFacilityTankStatuses(f));
-  document.getElementById('summary-total').textContent   = statuses.length || '—';
-  document.getElementById('summary-optimal').textContent = statuses.filter(s => s==='optimal').length;
-  document.getElementById('summary-warning').textContent = statuses.filter(s => s==='warning').length;
-  document.getElementById('summary-loading').textContent = statuses.filter(s => s==='loading').length;
+  const active   = statuses.filter(s => s !== 'empty');   // exclude empty tanks from counts
+  document.getElementById('summary-total').textContent   = active.length || '—';
+  document.getElementById('summary-optimal').textContent = active.filter(s => s==='optimal').length;
+  document.getElementById('summary-warning').textContent = active.filter(s => s==='warning').length;
+  document.getElementById('summary-loading').textContent = active.filter(s => s==='loading').length;
 }
 
 function renderTabs() {
@@ -1980,7 +1989,8 @@ function renderTabs() {
   allFacilityData.forEach((f, i) => {
     const btn = document.createElement('button');
     btn.className = 'tab' + (!showNominations && i === activeFacility ? ' active' : '');
-    const warnCount = getFacilityTankStatuses(f).filter(s => s==='warning').length;
+    const statuses  = getFacilityTankStatuses(f);
+    const warnCount = statuses.filter(s => s==='warning').length;  // empty tanks excluded
     const histBadge = f.showHistory ? `<span class="history-hint">history</span>` : '';
     btn.innerHTML = esc(f.name) + (warnCount ? ` (${warnCount} ⚠)` : '') + histBadge;
     btn.onclick = () => {
@@ -2102,7 +2112,11 @@ function renderTankGrid() {
            colVal(row,'product',facCols).toLowerCase().includes(query);
   });
 
-  tanks = [...tanks].sort((a,b) => {
+  // Separate active tanks from empty ones
+  const emptyTanks  = tanks.filter(row => statusOf(row, facCols) === 'empty');
+  const activeTanks = tanks.filter(row => statusOf(row, facCols) !== 'empty');
+
+  activeTanks.sort((a,b) => {
     if (currentSort === 'status')    return statusWeight(statusOf(a,facCols)) - statusWeight(statusOf(b,facCols));
     if (currentSort === 'fill-asc')  return (fillPct(a,facCols)??999) - (fillPct(b,facCols)??999);
     if (currentSort === 'fill-desc') return (fillPct(b,facCols)??-1)  - (fillPct(a,facCols)??-1);
@@ -2110,7 +2124,7 @@ function renderTankGrid() {
     return 0;
   });
 
-  if (!tanks.length) {
+  if (!activeTanks.length && !emptyTanks.length) {
     wrap.innerHTML = `<div class="no-results">No tanks match your search.</div>`;
     return;
   }
@@ -2118,13 +2132,36 @@ function renderTankGrid() {
   if (currentView === 'list') {
     const tableWrap = document.createElement('div');
     tableWrap.className = 'table-wrap';
-    tableWrap.appendChild(buildList(tanks, fac));
+    tableWrap.appendChild(buildList(activeTanks.length ? activeTanks : emptyTanks, fac));
     wrap.appendChild(tableWrap);
   } else {
-    const grid = document.createElement('div');
-    grid.className = 'tank-grid';
-    tanks.forEach(row => grid.appendChild(buildCard(row, fac)));
-    wrap.appendChild(grid);
+    if (activeTanks.length) {
+      const grid = document.createElement('div');
+      grid.className = 'tank-grid';
+      activeTanks.forEach(row => grid.appendChild(buildCard(row, fac)));
+      wrap.appendChild(grid);
+    }
+  }
+
+  // Últimas descargas — empty tanks shown as a compact section, not as warnings
+  if (emptyTanks.length) {
+    const section = document.createElement('div');
+    section.style.cssText = 'margin-top:1.5rem';
+    section.innerHTML = `<div style="font-size:.75rem;font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.6rem;padding:0 .25rem">
+      Últimas descargas
+    </div>`;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:.4rem';
+    emptyTanks.forEach(t => {
+      const name    = colVal(t, 'name',    facCols) || '—';
+      const product = colVal(t, 'product', facCols) || '';
+      const chip = document.createElement('div');
+      chip.style.cssText = 'display:flex;align-items:center;gap:.35rem;padding:.3rem .65rem;border-radius:8px;background:var(--card);border:1px solid var(--border);font-size:.78rem;color:var(--muted);cursor:pointer';
+      chip.innerHTML = `<span style="color:var(--text);font-weight:600">${tankNameHtml(name, fac)}</span>${product ? `<span>· ${esc(product)}</span>` : ''}`;
+      row.appendChild(chip);
+    });
+    section.appendChild(row);
+    wrap.appendChild(section);
   }
 }
 
