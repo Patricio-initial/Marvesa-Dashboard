@@ -1729,6 +1729,50 @@ function renderChartSection(fac) {
   renderTPRActivity(fac.historyUrl);
 }
 
+async function renderVoxenActivity(feeds) {
+  const tbody   = document.getElementById('voxen-activity-tbody');
+  const countEl = document.getElementById('voxen-activity-count');
+  if (!tbody) return;
+  try {
+    // Fetch all feeds and merge into one list
+    const allItems = [];
+    for (const feed of feeds) {
+      const annotated = await fetchHistoryFeed(feed);
+      annotated.forEach(item => allItems.push({ ...item, feedLabel: feed.label }));
+    }
+    // Sort newest first, take top 10
+    allItems.sort((a, b) => (b.date?.getTime() || 0) - (a.date?.getTime() || 0));
+    const recent = allItems.slice(0, 10);
+    if (countEl) countEl.textContent = `${recent.length} movimiento${recent.length !== 1 ? 's' : ''}`;
+    if (!recent.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">Sin movimientos recientes</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = recent.map(item => {
+      const r        = item.row;
+      const dateStr  = String(r[0] || '').trim();
+      const tank     = item.feedLabel || String(r[1] || '').trim();
+      const supplier = String(r[2] || '').trim();   // col 2 = supplier
+      const material = String(r[3] || '').trim();   // col 3 = material/product
+      const kgs      = parseKg(r[4]);
+      const isIn     = kgs >= 0;
+      const typeIcon = isIn ? '▲ Entrada' : '▼ Salida';
+      const typeColor = isIn ? 'color:var(--ok)' : 'color:var(--warn)';
+      const qtyDisp  = !isNaN(kgs) ? `${isIn ? '+' : '−'}${Math.abs(kgs).toLocaleString()} kg` : '—';
+      return `<tr>
+        <td style="white-space:nowrap">${esc(dateStr)}</td>
+        <td style="font-weight:600">${esc(tank)}</td>
+        <td style="${typeColor};font-weight:600;white-space:nowrap">${typeIcon}</td>
+        <td>${esc(supplier)}</td>
+        <td>${esc(material)}</td>
+        <td class="col-num" style="font-variant-numeric:tabular-nums">${qtyDisp}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">Error cargando movimientos</td></tr>`;
+  }
+}
+
 async function renderTPRActivity(url) {
   const tbody = document.getElementById('tpr-activity-tbody');
   const countEl = document.getElementById('tpr-activity-count');
@@ -1825,22 +1869,15 @@ function fillPct(row, cols) {
 function statusOf(row, cols) {
   const manual = colVal(row,'status',cols).toLowerCase();
   if (['optimal'].includes(manual))                return 'optimal';
-  if (['warning','warn'].includes(manual))         return 'warning';
-  if (['empty'].includes(manual))                  return 'empty';
+  if (['warning','warn','empty'].includes(manual)) return 'warning';
   const pct = fillPct(row, cols);
   if (pct === null)                                return 'unknown';
-  if (pct <= 0) {
-    // Only treat as empty when vol is an explicit zero.
-    // NaN/blank vol means the sheet hasn't populated the column → unknown, not empty.
-    const vol = parseFloat(colVal(row,'volume',cols).replace(/,/g,''));
-    if (!isNaN(vol) && vol <= 0) return 'empty';
-    return 'loading';
-  }
+  if (pct <= 0)                                    return 'warning';   // empty = warning
   if (pct >= CONFIG.thresholds.optimal)            return 'optimal';
   return 'loading';
 }
 
-function statusWeight(s) { return {warning:0, loading:1, unknown:2, optimal:3, empty:4}[s] ?? 4; }
+function statusWeight(s) { return {warning:0, loading:1, unknown:2, optimal:3}[s] ?? 3; }
 
 
 /* ══════════════════════════════════════════════════════════════
@@ -2144,6 +2181,35 @@ function renderTankGrid() {
     grid.className = 'tank-grid';
     tanks.forEach(row => grid.appendChild(buildCard(row, fac)));
     wrap.appendChild(grid);
+  }
+
+  // Voxen: show recent movements across all history feeds
+  if (fac.showHistory && fac.historyFeeds?.length) {
+    const actSection = document.createElement('div');
+    actSection.className = 'chart-section activity-section';
+    actSection.id = 'voxen-activity-section';
+    actSection.innerHTML = `
+      <div class="chart-header">
+        <span class="chart-title">Últimos movimientos</span>
+        <span id="voxen-activity-count" style="font-size:.8rem;color:var(--muted)"></span>
+      </div>
+      <div class="table-wrap" style="overflow-x:auto">
+        <table class="tank-table">
+          <thead><tr>
+            <th>Fecha</th>
+            <th>Tanque</th>
+            <th>Tipo</th>
+            <th>Proveedor</th>
+            <th>Producto</th>
+            <th class="col-num">Cantidad (kg)</th>
+          </tr></thead>
+          <tbody id="voxen-activity-tbody">
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>`;
+    wrap.appendChild(actSection);
+    renderVoxenActivity(fac.historyFeeds);
   }
 }
 
