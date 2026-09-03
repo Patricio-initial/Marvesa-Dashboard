@@ -2120,11 +2120,8 @@ function renderTankGrid() {
            colVal(row,'product',facCols).toLowerCase().includes(query);
   });
 
-  // Separate active tanks from empty ones
-  const emptyTanks  = tanks.filter(row => statusOf(row, facCols) === 'empty');
-  const activeTanks = tanks.filter(row => statusOf(row, facCols) !== 'empty');
-
-  activeTanks.sort((a,b) => {
+  // Sort all tanks together — empty ones go to the bottom via statusWeight (empty=4)
+  tanks.sort((a,b) => {
     if (currentSort === 'status')    return statusWeight(statusOf(a,facCols)) - statusWeight(statusOf(b,facCols));
     if (currentSort === 'fill-asc')  return (fillPct(a,facCols)??999) - (fillPct(b,facCols)??999);
     if (currentSort === 'fill-desc') return (fillPct(b,facCols)??-1)  - (fillPct(a,facCols)??-1);
@@ -2132,7 +2129,7 @@ function renderTankGrid() {
     return 0;
   });
 
-  if (!activeTanks.length && !emptyTanks.length) {
+  if (!tanks.length) {
     wrap.innerHTML = `<div class="no-results">No tanks match your search.</div>`;
     return;
   }
@@ -2140,36 +2137,13 @@ function renderTankGrid() {
   if (currentView === 'list') {
     const tableWrap = document.createElement('div');
     tableWrap.className = 'table-wrap';
-    tableWrap.appendChild(buildList(activeTanks.length ? activeTanks : emptyTanks, fac));
+    tableWrap.appendChild(buildList(tanks, fac));
     wrap.appendChild(tableWrap);
   } else {
-    if (activeTanks.length) {
-      const grid = document.createElement('div');
-      grid.className = 'tank-grid';
-      activeTanks.forEach(row => grid.appendChild(buildCard(row, fac)));
-      wrap.appendChild(grid);
-    }
-  }
-
-  // Últimas descargas — empty tanks shown as a compact section, not as warnings
-  if (emptyTanks.length) {
-    const section = document.createElement('div');
-    section.style.cssText = 'margin-top:1.5rem';
-    section.innerHTML = `<div style="font-size:.75rem;font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.6rem;padding:0 .25rem">
-      Últimas descargas
-    </div>`;
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:.4rem';
-    emptyTanks.forEach(t => {
-      const name    = colVal(t, 'name',    facCols) || '—';
-      const product = colVal(t, 'product', facCols) || '';
-      const chip = document.createElement('div');
-      chip.style.cssText = 'display:flex;align-items:center;gap:.35rem;padding:.3rem .65rem;border-radius:8px;background:var(--card);border:1px solid var(--border);font-size:.78rem;color:var(--muted);cursor:pointer';
-      chip.innerHTML = `<span style="color:var(--text);font-weight:600">${tankNameHtml(name, fac)}</span>${product ? `<span>· ${esc(product)}</span>` : ''}`;
-      row.appendChild(chip);
-    });
-    section.appendChild(row);
-    wrap.appendChild(section);
+    const grid = document.createElement('div');
+    grid.className = 'tank-grid';
+    tanks.forEach(row => grid.appendChild(buildCard(row, fac)));
+    wrap.appendChild(grid);
   }
 }
 
