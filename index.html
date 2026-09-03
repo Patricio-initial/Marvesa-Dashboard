@@ -1830,11 +1830,11 @@ function statusOf(row, cols) {
   const pct = fillPct(row, cols);
   if (pct === null)                                return 'unknown';
   if (pct <= 0) {
-    // Only treat as empty when stock volume is actually zero/blank;
-    // pct=0 with non-zero stock means the sheet's % Used column is stale.
+    // Only treat as empty when vol is an explicit zero.
+    // NaN/blank vol means the sheet hasn't populated the column → unknown, not empty.
     const vol = parseFloat(colVal(row,'volume',cols).replace(/,/g,''));
-    if (isNaN(vol) || vol <= 0) return 'empty';
-    return 'loading';  // has stock but % not updated — treat as loading/in-progress
+    if (!isNaN(vol) && vol <= 0) return 'empty';
+    return 'loading';
   }
   if (pct >= CONFIG.thresholds.optimal)            return 'optimal';
   return 'loading';
