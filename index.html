@@ -1292,6 +1292,7 @@ async function loadNominationRows() {
 
   for (const facData of allFacilityData) {
     if (facData.error) continue;
+    if (facData.hidden) continue;   // skip hidden facilities (e.g. Carboclor while out of service)
 
     /* ── TPR (shared): per-tank per-shipper rows are already in facData.tanks ── */
     if (facData.type === 'shared') {
