@@ -421,6 +421,7 @@ const CONFIG = {
   facilities: [
     {
       name: "Carboclor",
+      hidden: true,   // temporariamente fuera de servicio — cambiar a false para reactivar
       csvUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSdyOrnlQBDihM-vR3ylD5hyWkwahrugTXpi_tEeEwRxXZiNIEGlZ2VMZvwJ3gkzxHF2XNcFXMQApun/pub?gid=1509369466&single=true&output=csv",
       showHistory: true,
       historyFeeds: [
@@ -2020,18 +2021,18 @@ function renderHeader() {
 }
 
 function renderSummary() {
-  const statuses = allFacilityData.flatMap(f => getFacilityTankStatuses(f));
-  const active   = statuses.filter(s => s !== 'empty');   // exclude empty tanks from counts
-  document.getElementById('summary-total').textContent   = active.length || '—';
-  document.getElementById('summary-optimal').textContent = active.filter(s => s==='optimal').length;
-  document.getElementById('summary-warning').textContent = active.filter(s => s==='warning').length;
-  document.getElementById('summary-loading').textContent = active.filter(s => s==='loading').length;
+  const statuses = allFacilityData.filter(f => !f.hidden).flatMap(f => getFacilityTankStatuses(f));
+  document.getElementById('summary-total').textContent   = statuses.length || '—';
+  document.getElementById('summary-optimal').textContent = statuses.filter(s => s==='optimal').length;
+  document.getElementById('summary-warning').textContent = statuses.filter(s => s==='warning').length;
+  document.getElementById('summary-loading').textContent = statuses.filter(s => s==='loading').length;
 }
 
 function renderTabs() {
   const wrap = document.getElementById('tabs');
   wrap.innerHTML = '';
   allFacilityData.forEach((f, i) => {
+    if (f.hidden) return;   // skip hidden facilities
     const btn = document.createElement('button');
     btn.className = 'tab' + (!showNominations && i === activeFacility ? ' active' : '');
     const statuses  = getFacilityTankStatuses(f);
@@ -2682,10 +2683,11 @@ async function doRefresh() {
   const btn = document.getElementById('refresh-btn');
   btn.disabled = true; btn.textContent = '⟳ Loading…';
   await loadAll();
-  // On first load, default to Voxen; fallback to first facility
+  // On first load, default to Voxen; fallback to first non-hidden facility
   if (activeFacility === -1) {
-    const voxIdx = allFacilityData.findIndex(f => f.name === 'Voxen');
-    activeFacility = voxIdx >= 0 ? voxIdx : 0;
+    const voxIdx  = allFacilityData.findIndex(f => f.name === 'Voxen' && !f.hidden);
+    const firstOk = allFacilityData.findIndex(f => !f.hidden);
+    activeFacility = voxIdx >= 0 ? voxIdx : (firstOk >= 0 ? firstOk : 0);
   }
   renderSummary();
   renderTabs();
